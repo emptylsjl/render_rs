@@ -1,0 +1,16 @@
+[package]
+name = "vk_rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+winit = "0.27.5"
+glam = "0.22.0"
+ash = { git = "https://github.com/ash-rs/ash.git", features = ["linked", "debug"] }
+windows = "0.44.0"
+memchr = "2.5.0"
+rand_chacha = "0.3.1"
+raw-window-handle = "0.5.0"
+smallvec = "1.10.0"
