@@ -11,7 +11,7 @@ const RMDiv = styled.div`
   width: 100%;
   top: 50%;
   height: 90%;
-  transform: translateY(-50%) translateX(${p => p.transX || '5%'});
+  transform: translateY(-50%) translateX(${(p: any) => p.transX || '5%'});
   border-top-left-radius: 2rem;
   border-bottom-left-radius: 2rem;
   box-shadow: 0 0 1rem 0.2rem #00000080;
@@ -41,7 +41,7 @@ const RMIDivFixed = styled.div`
 const RMIDiv = styled.div`
   position: absolute;
   width: 100%;
-  height: ${props => props.compStyle?.height || '100%'};
+  height: ${(props: any) => props?.compStyle?.height || '100%'};
   background: #ffffff20;
 `
 const RMFDiv = styled.div`
@@ -55,8 +55,8 @@ const RMFDiv = styled.div`
 `
 
 function RMainFuncPanel() {
-    const mainDivRef = useRef()
-    const iconDivRef = useRef()
+    const mainDivRef: any = useRef()
+    const iconDivRef: any = useRef()
     const [iconY, sIconY] = useState({})
     const [iconTop, sIconTop] = useState({})
     const [divTrans, sDivTrans] = useState('80%')
@@ -64,7 +64,7 @@ function RMainFuncPanel() {
     const [divTransPx, sDivTransPx] = useState({expand:0, fold:0})
     const [funcDivPos, sFuncDivPos] = useState({})
     const iconDivWid = 60
-    const RMPanels = {}
+    const RMPanels: any = {}
 
     for (let i = 1; i < 10; i++) {
         const compKey = 'p'+i
@@ -81,14 +81,14 @@ function RMainFuncPanel() {
         }
     }
 
-    function foldIcon(funcDivPx=funcDivPos) {
+    function foldIcon(funcDivPx: any = funcDivPos) {
         sIconScroll(false)
 
         let curHeight = RMPanels['p1'].compRef.panelRef.current.offsetTop;
         const nextH = iconDivRef.current.offsetWidth;
         const curScrollPx = mainDivRef.current.scrollTop
 
-        let iconTrans = {}
+        let iconTrans: any = {}
 
         Object.entries(RMPanels).forEach(([k, v]) => {
             const scrollPx = 0 - funcDivPx[k] + curScrollPx
@@ -137,9 +137,10 @@ function RMainFuncPanel() {
     }, [])
 
     useEffect(()=>{
-        let divPos = {}
-        let iconTopPx = {}
-        Object.entries(RMPanels).forEach(([k, v]) => {
+        let divPos: any = {}
+        let iconTopPx: any = {}
+        console.log(RMPanels)
+        Object.entries(RMPanels).forEach(([k, v]: [string, any]) => {
             iconTopPx[k] = divPos[k] = v.compRef.panelRef.current.offsetTop
 
         })
@@ -151,21 +152,20 @@ function RMainFuncPanel() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-
-    return (
-        <RMDiv transX={divTrans} onMouseLeave={()=>{foldIcon();sDivTrans(divTransPx.fold+'px')}}>
-            <RMContentPanel ref={mainDivRef} onScroll={()=>funcDivOnScroll()}>
-                <RMIDivFixed ref={iconDivRef} onMouseEnter={()=>foldIcon()} onClick={()=>sDivTrans(divTransPx.expand+'px')}>
-                    <RMIDiv compStyle={{height: mainDivRef.current?.scrollHeight+'px'}}>
-                        {Object.entries(RMPanels).map(([k, v]) => <RMIcon key={k} {...v}/>)}
-                    </RMIDiv>
-                </RMIDivFixed>
-                <RMFDiv onMouseEnter={() => rerenderIcon()}>
-                    {Object.entries(RMPanels).map(([k, v]) => <RMFPanel key={k} {...v}/>)}
-                </RMFDiv>
-            </RMContentPanel>
-        </RMDiv>
-    )
+    // return (
+    //     <RMDiv transX={divTrans} onMouseLeave={()=>{foldIcon();sDivTrans(divTransPx.fold+'px')}}>
+    //         <RMContentPanel ref={mainDivRef} onScroll={()=>funcDivOnScroll()}>
+    //             <RMIDivFixed ref={iconDivRef} onMouseEnter={()=>foldIcon()} onClick={()=>sDivTrans(divTransPx.expand+'px')}>
+    //                 <RMIDiv compStyle={{height: mainDivRef.current?.scrollHeight+'px'}}>
+    //                     {Object.entries(RMPanels).map(([k, v]) => <RMIcon key={k} {...v}/>)}
+    //                 </RMIDiv>
+    //             </RMIDivFixed>
+    //             <RMFDiv onMouseEnter={() => rerenderIcon()}>
+    //                 {Object.entries(RMPanels).map(([k, v]) => <RMFPanel key={k} {...v}/>)}
+    //             </RMFDiv>
+    //         </RMContentPanel>
+    //     </RMDiv>
+    // )
 }
 
 export default RMainFuncPanel

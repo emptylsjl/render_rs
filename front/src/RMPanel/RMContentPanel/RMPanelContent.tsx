@@ -4,9 +4,9 @@ import styled from 'styled-components';
 
 const RMIButton = styled.button`
   position: absolute;
-  //top: ${props => props.iconStyle?.top || -50}px;
+  //top: ${(props: any) => props.iconStyle?.top || -50}px;
   left: 15%;
-  //transform: translateY(${props => props.iconStyle?.transY || 0}px);
+  //transform: translateY(${(props: any) => props.iconStyle?.transY || 0}px);
   width: 70%;
   aspect-ratio: 1/1;
   background-color: #777777;
@@ -17,7 +17,7 @@ const RMIButton = styled.button`
 const RMFDiv = styled.div`
   position: relative;
   top: 10%;
-  height: ${props => props.compStyle?.Divheight || '20rem'};
+  height: ${(props: any) => props.compStyle?.Divheight || '20rem'};
   width: 90%;
 `
 const MFPanel = styled.div`
@@ -29,6 +29,7 @@ const MFPanel = styled.div`
   background: #777777;
 `
 
+// @ts-ignore
 function RMIcon({compStyle, compRef, compKey}) {
 
     function mainIconOnClick() {
@@ -46,6 +47,7 @@ function RMIcon({compStyle, compRef, compKey}) {
     )
 }
 
+// @ts-ignore
 function RMFPanel({compStyle, setState, compRef: {panelRef}}) {
 
 
@@ -56,8 +58,8 @@ function RMFPanel({compStyle, setState, compRef: {panelRef}}) {
     // }, [])
 
     return (
-        <RMFDiv ref={panelRef}>
-            <MFPanel compStyle={compStyle}>
+        <RMFDiv ref={panelRef} compStyle={compStyle}>
+            <MFPanel >
             </MFPanel>
         </RMFDiv>
     )

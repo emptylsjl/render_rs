@@ -1,8 +1,8 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useRef, useState, useSyncExternalStore} from 'react';
 import styled from 'styled-components';
 import { styled as mui_styled } from '@mui/system';
 
-import init, {draw, img_vec, reset_vec, rload} from '../wp_pkg/next.js';
+import init, {draw, img_vec, rload} from '../wp_pkg/next.js';
 import {Slider} from "@mui/material";
 
 const MCDiv = styled.div`
@@ -24,11 +24,11 @@ const MCPanel = styled.div`
 `
 const CDiv = styled.div`
   position: absolute;
-  height: ${props => props.layout.h || '60%'};
-  width: ${props => props.layout.w || '60%'};
-  left: ${props => props.layout.x+'%' || 'auto'};
-  top: ${props => props.layout.y+'%' || 'auto'};
-  ${props => props.layout.float? `float: ${props.layout.float};`  : ''}
+  height: ${(props: any) => props.layout.h || '60%'};
+  width: ${(props: any) => props.layout.w || '60%'};
+  left: ${(props: any) => props.layout.x+'%' || 'auto'};
+  top: ${(props: any) => props.layout.y+'%' || 'auto'};
+  ${(props: any) => props.layout.float? `float: ${props.layout.float};`  : ''}
   box-sizing: border-box;
   padding: 0.5rem 0.5rem 0.5rem 0.5rem;
 `
@@ -49,33 +49,19 @@ const InputBox = styled.input`
 // const EmptyDiv = styled.div``;
 
 const PI = Math.PI;
-let rctx;
-let imgVec;
-
-function CDivPanel({layout, Comp, content, cdRef, index}) {
-
-
-    return(
-        <CDiv layout={layout}>
-            <CPanel>
-
-                {/*<Comp {...content}/>*/}
-            </CPanel>
-        </CDiv>
-    )
-}
-
+let rctx: any;
+let imgVec: any;
 
 function MContentPanel() {
 
     let objs = useRef({});
-    let rcanvas = useRef();
+    let rcanvas: any = useRef();
     let [ct1, setCt1] = useState(2);
     let [ct2, setCt2] = useState(2);
     let [ct3, setCt3] = useState(2);
     let [ct4, setCt4] = useState(1);
     let [dim, setDim] = useState({h: 0, w: 0});
-    let [objLi, setObjLi] = useState({})
+    let [objLi, setObjLi]: any = useState({})
     let [dlist, setDlist] = useState([""]);
 
     let option = {
@@ -109,13 +95,9 @@ function MContentPanel() {
         }
     }
 
-    console.log(0x5E00 / 0x200)
-    console.log(48* 0x200)
-    console.log(parseInt(48* 0x200, 10).toString(16))
-
-    function load_obj(li) {
+    function load_obj(li: string[]) {
         console.log("load")
-        li.forEach(n => {
+        li.forEach((n) => {
             let b = fetch(`/static/obj/${n}/${n}.obj`).then(r => r.text())
 
             new Promise((resolve, reject) => {
@@ -123,13 +105,13 @@ function MContentPanel() {
                 img.onload = function () {
                     let canv = document.createElement("canvas");
                     let rttx = canv.getContext('2d', {willReadFrequently: true});
-                    [canv.height, canv.width] = [this.height, this.width];
-                    rttx.drawImage(img, 0, 0);
-                    resolve(rttx.getImageData(0, 0, this.width, this.height))
+                    [canv.height, canv.width] = [img.height, img.width];
+                    rttx?.drawImage(img, 0, 0);
+                    resolve(rttx?.getImageData(0, 0, img.width, img.height))
                 };
                 img.onerror = reject;
                 img.src = `/static/obj/${n}/${n}_diffuse.png`;
-            }).then(async r => {
+            }).then(async (r: any) => {
                 objLi[n] = rload(await b, r.data, [r.width, r.height], objLi[n]);
                 setObjLi({...objLi})
             })
@@ -139,6 +121,8 @@ function MContentPanel() {
     useEffect(()=>{
         rc_draw()
     }, [dim, objLi, ct1, ct2, ct3, ct4])
+
+
 
     useEffect(()=>{
         let li = ["african_head"]
@@ -155,12 +139,12 @@ function MContentPanel() {
             window.addEventListener('resize', rc_resize)
         })();
 
-        return _ => {window.removeEventListener('resize', rc_resize)}
+        return (_: void) => {window.removeEventListener('resize', rc_resize)}
 
     }, [])
     return(
         <MCDiv><MCPanel>
-            <Slider aria-label="Volume" step={0.01} min={0.01} max={40} onChange={e => {setCt1(e.target.value)}} />
+            <Slider aria-label="Volume" step={0.01} min={0.01} max={40} onChange={(e: any) => {setCt1(e.target?.value)}} />
             <RCanvas ref={rcanvas} width={dim.w} height={dim.h}></RCanvas>
         </MCPanel></MCDiv>
     )

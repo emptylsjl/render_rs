@@ -5,9 +5,10 @@ import reportWebVitals from './reportWebVitals';
 
 import './layout.css'
 import App from "./App";
-import RPanel from "/./RMPanel/RPanel";
+import RPanel from "./RMPanel/RPanel";
 import NavMainPanel from "./NavBarPanel/NavPanel";
 import MContentPanel from "./MainContentPanel/MCPanel";
+// import {} from 'styled-components/cssprop'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
