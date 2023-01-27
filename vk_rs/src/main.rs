@@ -16,7 +16,7 @@ use ash::extensions::ext::DebugUtils;
 use ash::extensions::khr;
 use ash::extensions::khr::{Surface, Swapchain};
 use ash::prelude::VkResult;
-use ash::vk::{LayerProperties, PhysicalDeviceFeatures, PresentModeKHR, SurfaceKHR, SwapchainKHR};
+use ash::vk::{Image, ImageView, LayerProperties, PhysicalDeviceFeatures, PresentModeKHR, Queue, SurfaceKHR, SwapchainKHR};
 use winit::{
     event::{Event::*, WindowEvent as WE, DeviceEvent as DE},
     event_loop::EventLoop,
@@ -152,7 +152,7 @@ struct VKPhysicalDeviceProperties {
     graphic_index: u32
 }
 
-fn get_device(instance: &Instance, surface: &SurfaceKHR, surface_handle: &Surface) -> VKPhysicalDeviceProperties {
+fn enumerate_device(instance: &Instance, surface: &SurfaceKHR, surface_handle: &Surface) -> VKPhysicalDeviceProperties {
     unsafe {
         instance.enumerate_physical_devices().unwrap()
             .into_iter()
@@ -189,7 +189,12 @@ fn get_device(instance: &Instance, surface: &SurfaceKHR, surface_handle: &Surfac
     }
 }
 
-fn create_device(instance: &Instance, device_properties: &VKPhysicalDeviceProperties, extensions: &Vec<*const c_char>, features: &PhysicalDeviceFeatures) -> Device {
+fn create_device(
+    instance: &Instance,
+    device_properties: &VKPhysicalDeviceProperties,
+    extensions: &Vec<*const c_char>,
+    features: &PhysicalDeviceFeatures
+) -> (Device, Queue) {
     assert!(device_properties.surface_capabilities.min_image_count > 0, "surface incapable of image displacement");
     // assert!()
     let queue_info = vk::DeviceQueueCreateInfo::default()
@@ -202,17 +207,19 @@ fn create_device(instance: &Instance, device_properties: &VKPhysicalDeviceProper
         .enabled_features(features);
 
     unsafe {
-        instance
+        let device = instance
             .create_device(device_properties.physical_device, &device_create_info, None)
-            .unwrap()
+            .expect("device");
+        let queue = device.get_device_queue(device_properties.graphic_index, 0);
+        (device, queue)
     }
 }
 
 fn create_swapchain(
-    instance: &Instance,
-    device: &Device,
+    swapchain_loader : &Swapchain,
     surface: &SurfaceKHR,
-    device_properties: &VKPhysicalDeviceProperties) -> SwapchainKHR {
+    device_properties: &VKPhysicalDeviceProperties
+) -> SwapchainKHR {
 
     let present = device_properties.surface_present
         .iter()
@@ -226,7 +233,7 @@ fn create_swapchain(
 
     let extent = device_properties.surface_capabilities.current_extent;
     let format = device_properties.surface_formats[0];
-    let image_count = 2;
+    let image_count = device_properties.surface_capabilities.min_image_count+1;
     let transform = device_properties.surface_capabilities.current_transform;
 
     let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
@@ -234,7 +241,7 @@ fn create_swapchain(
         .min_image_count(image_count)
         .image_color_space(format.color_space)
         .image_format(format.format)
-        // .image_extent(extent)
+        .image_extent(extent)
         .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
         .pre_transform(transform)
@@ -243,11 +250,42 @@ fn create_swapchain(
         .clipped(true)
         .image_array_layers(1);
 
-
-    let swapchain_loader = Swapchain::new(&instance, &device);
     unsafe {
-        swapchain_loader.create_swapchain(&swapchain_create_info, None).unwrap()
+        swapchain_loader.create_swapchain(&swapchain_create_info, None).expect("swapchain")
     }
+}
+
+fn create_image_views(
+    device: &Device,
+    swapchain: &SwapchainKHR,
+    swapchain_loader : &Swapchain,
+    device_properties: &VKPhysicalDeviceProperties
+) -> (Vec<Image>, Vec<ImageView>) {
+    let swapchain_image = unsafe { swapchain_loader.get_swapchain_images(*swapchain) }.expect("swapchain image");
+    let image_views = swapchain_image
+        .iter()
+        .map(|&image| {
+            let create_view_info = vk::ImageViewCreateInfo::default()
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(device_properties.surface_formats[0].format)
+                .components(vk::ComponentMapping {
+                    r: vk::ComponentSwizzle::IDENTITY,
+                    g: vk::ComponentSwizzle::IDENTITY,
+                    b: vk::ComponentSwizzle::IDENTITY,
+                    a: vk::ComponentSwizzle::IDENTITY,
+                })
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_array_layer: 0,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    layer_count: 1,
+                })
+                .image(image);
+            unsafe { device.create_image_view(&create_view_info, None).expect("image view") }
+        })
+        .collect::<Vec<vk::ImageView>>();
+    (swapchain_image, image_views)
 }
 
 fn main() {
@@ -266,15 +304,16 @@ fn main() {
     let surface_handle = Surface::new(&entry, &instance);
     let surface = vk_surface(&entry, &window, &instance).unwrap();
 
-    let device_properties = get_device(&instance, &surface, &surface_handle);
-
+    let device_properties = enumerate_device(&instance, &surface, &surface_handle);
 
     let features = vk::PhysicalDeviceFeatures::default();
     let extensions = vec![khr::Swapchain::name().as_ptr()];
-    let device = create_device(&instance, &device_properties, &extensions, &features);
-    let queue = unsafe { device.get_device_queue(device_properties.graphic_index, 0) };
+    let (device, queue) = create_device(&instance, &device_properties, &extensions, &features);
 
-    let swapchain = create_swapchain(&instance, &device, &surface, &device_properties);
+    let swapchain_loader = Swapchain::new(&instance, &device);
+    let swapchain = create_swapchain(&swapchain_loader, &surface, &device_properties);
+
+    let (swapchain_image, image_views) = create_image_views(&device, &swapchain, &swapchain_loader, &device_properties);
 
 
 
