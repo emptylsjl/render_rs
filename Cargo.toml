@@ -3,4 +3,5 @@ members = [
     "tr_rs",
     "vk_rs",
     "tr_wasm",
+    "temp_rs"
 ]
