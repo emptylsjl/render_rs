@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.23)
 project(draw)
+set(CMAKE_CXX_STANDARD 20)
 
 set(GLFW_DIR lib/glfw-3.3.8)
 message("GLFW_DIR found? " ${GLFW_DIR})
