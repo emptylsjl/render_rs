@@ -9,16 +9,14 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::ffi::{c_char, CStr};
 use std::fmt::{Debug, Formatter, Pointer};
-use std::iter::once;
+use std::iter::{Map, once};
 use std::{ptr, slice};
+use std::slice::Iter;
 use std::sync::Arc;
 
-use ash::{Device, Entry, Instance, util, vk};
-use ash::extensions::ext::DebugUtils;
-use ash::extensions::khr;
-use ash::extensions::khr::{Surface, Swapchain};
-use ash::prelude::VkResult;
-use ash::vk::PipelineLayout;
+use ash::{*, prelude::VkResult};
+use ash::extensions::{khr, ext};
+use ash::vk::{CommandBuffer, CommandPool};
 use winit::{
     event::{Event::*, WindowEvent as WE, DeviceEvent},
     event_loop::EventLoop,
@@ -44,11 +42,12 @@ unsafe extern "system" fn debug_callback(
     let data = *callback_data;
     let name = CStr::from_ptr(data.p_message_id_name);
     let message = CStr::from_ptr(data.p_message);
-    // let severity = msg_severity.fmt()
+    let severity = format!("{msg_severity:?}");
+    let mtype = format!("{msg_type:?}");
 
     println!("\
-        {msg_severity:<15?}{msg_type:<15?} - {name:?}\n\
-        {message:?}\n\
+        {severity:<10} | {mtype:<10} | {name:?}\n\
+        {message:?}\
     ");
     vk::FALSE
 }
@@ -63,7 +62,7 @@ fn create_instance(entry: &Entry) -> Result<Arc<Instance>, Box<dyn Error>> {
         ash::extensions::khr::Win32Surface::name().as_ptr(),
         ash::extensions::khr::GetSurfaceCapabilities2::name().as_ptr(),
         ash::extensions::khr::GetPhysicalDeviceProperties2::name().as_ptr(),
-        DebugUtils::name().as_ptr(),
+        ext::DebugUtils::name().as_ptr(),
     ];
 
     let app_name = chars(b"VkTri\0");
@@ -116,7 +115,7 @@ fn debug_init(entry: &Entry, instance: &Instance) -> vk::DebugUtilsMessengerEXT 
         )
         .pfn_user_callback(Some(debug_callback));
 
-    let debug_loader = DebugUtils::new(&entry, &instance);
+    let debug_loader = ext::DebugUtils::new(&entry, &instance);
     unsafe {
         debug_loader
             .create_debug_utils_messenger(&debug_info, None)
@@ -157,7 +156,7 @@ struct VKPhysicalDeviceProperties {
     graphic_index: u32
 }
 
-fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_handle: &Surface) -> VKPhysicalDeviceProperties {
+fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_handle: &khr::Surface) -> VKPhysicalDeviceProperties {
     unsafe {
         instance.enumerate_physical_devices().unwrap()
             .into_iter()
@@ -214,14 +213,14 @@ fn create_device(
     unsafe {
         let device = instance
             .create_device(device_properties.physical_device, &device_create_info, None)
-            .expect("device");
+            .expect("create device");
         let queue = device.get_device_queue(device_properties.graphic_index, 0);
         (device, queue)
     }
 }
 
 fn create_swapchain(
-    swapchain_loader : &Swapchain,
+    swapchain_loader : &khr::Swapchain,
     surface: &vk::SurfaceKHR,
     device_properties: &VKPhysicalDeviceProperties
 ) -> vk::SwapchainKHR {
@@ -256,17 +255,17 @@ fn create_swapchain(
         .image_array_layers(1);
 
     unsafe {
-        swapchain_loader.create_swapchain(&swapchain_create_info, None).expect("swapchain")
+        swapchain_loader.create_swapchain(&swapchain_create_info, None).expect("create swapchain")
     }
 }
 
 fn create_image_views(
     device: &Device,
     swapchain: &vk::SwapchainKHR,
-    swapchain_loader : &Swapchain,
+    swapchain_loader : &khr::Swapchain,
     device_properties: &VKPhysicalDeviceProperties
 ) -> (Vec<vk::Image>, Vec<vk::ImageView>) {
-    let swapchain_image = unsafe { swapchain_loader.get_swapchain_images(*swapchain) }.expect("swapchain image");
+    let swapchain_image = unsafe { swapchain_loader.get_swapchain_images(*swapchain) }.expect("create swapchain image");
     let image_views = swapchain_image
         .iter()
         .map(|&image| {
@@ -287,15 +286,15 @@ fn create_image_views(
                     layer_count: 1,
                 })
                 .image(image);
-            unsafe { device.create_image_view(&create_view_info, None).expect("image view") }
+            unsafe { device.create_image_view(&create_view_info, None).expect("create image view") }
         })
         .collect::<Vec<vk::ImageView>>();
     (swapchain_image, image_views)
 }
 
 fn spirv_from_bytes(bytes: &[u8]) -> Vec<u32> {
-    assert_eq!(bytes.len() % 4, 0, "shader len");
 
+    assert_eq!(bytes.len() % 4, 0, "shader len");
     let bytes_ptr = bytes.as_ptr() as *mut u32;
     let spirv = unsafe { slice::from_raw_parts(bytes_ptr, bytes.len()/4) }.to_vec();
 
@@ -312,90 +311,98 @@ fn spirv_from_bytes(bytes: &[u8]) -> Vec<u32> {
 }
 
 // fn shader_module(device: &Device, path: &str) -> ShaderModule {
-fn create_shader_module(device: &Device, bytes: &[u8]) -> vk::ShaderModule {
+fn create_shader_module<'a>(device: &Device, bytes: &[u8], stage: vk::ShaderStageFlags) -> vk::PipelineShaderStageCreateInfo<'a> {
 
     // let mut file = std::fs::File::open(path).unwrap();
     // let spirv_bytes = util::read_spv(&mut file).unwrap();
     let spirv_bytes = spirv_from_bytes(bytes);
     let shader_create_info = vk::ShaderModuleCreateInfo::default().code(&spirv_bytes);
-    unsafe {
+    let shader_module = unsafe {
         device
             .create_shader_module(&shader_create_info, None)
-            .expect("shader create")
-    }
+            .expect("create shader create")
+    };
+    vk::PipelineShaderStageCreateInfo::default()
+        .stage(stage)
+        .module(shader_module)
+        .name(chars(b"main\0"))
 }
 
-fn create_pipeline_layout(device: &Device) -> PipelineLayout {
+fn create_pipeline_layout(device: &Device) -> vk::PipelineLayout {
     let layout_create_info = vk::PipelineLayoutCreateInfo::default();
 
     unsafe {
-        device.create_pipeline_layout(&layout_create_info, None).expect("pipeline layout")
+        device.create_pipeline_layout(&layout_create_info, None).expect("create pipeline layout")
     }
 }
 
-fn main() {
-    let entry = Entry::linked();
+fn create_render_pass(device: &Device, device_properties: &VKPhysicalDeviceProperties) -> vk::RenderPass {
 
-    let instance = create_instance(&entry).unwrap();
-    let debug_messenger = debug_init(&entry, &instance);
+    let swapchain_format = device_properties.surface_formats[0].format;
+    let attachment_description = [
+        vk::AttachmentDescription::default()
+            .format(swapchain_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+    ];
 
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title("A fantastic window!")
-        .with_inner_size(winit::dpi::LogicalSize::new(800, 800))
-        .build(&event_loop)
-        .unwrap();
+    let attachment_references = [
+        vk::AttachmentReference::default()
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .attachment(0)
+    ];
 
-    let surface_handle = Surface::new(&entry, &instance);
-    let surface = create_vk_surface(&entry, &window, &instance).unwrap();
+    let subpass_descriptions = [
+        vk::SubpassDescription::default()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&attachment_references)
+    ];
 
-    let device_properties = enumerate_device(&instance, &surface, &surface_handle);
+    let render_pass_create_info = vk::RenderPassCreateInfo::default()
+        .attachments(&attachment_description)
+        .subpasses(&subpass_descriptions);
 
-    let features = vk::PhysicalDeviceFeatures::default();
-    let extensions = vec![khr::Swapchain::name().as_ptr()];
-    let (device, queue) = create_device(&instance, &device_properties, &extensions, &features);
+    unsafe {
+        device.create_render_pass(&render_pass_create_info, None) .expect("create render pass")
+    }
+}
 
-    let swapchain_loader = Swapchain::new(&instance, &device);
-    let swapchain = create_swapchain(&swapchain_loader, &surface, &device_properties);
+fn create_graphic_pipeline(
+    device: &Device,
+    render_pass: &vk::RenderPass,
+    device_properties: &VKPhysicalDeviceProperties
+) -> Vec<vk::Pipeline> {
 
-    let (swapchain_image, image_views) = create_image_views(&device, &swapchain, &swapchain_loader, &device_properties);
-
-    let frag = shader_module(&device, include_bytes!("shader/frag.spv"));
-    let vert = shader_module(&device, include_bytes!("shader/vert.spv"));
+    let frag_create_info = create_shader_module(device, include_bytes!("shader/frag.spv"), vk::ShaderStageFlags::FRAGMENT);
+    let vert_create_info = create_shader_module(device, include_bytes!("shader/vert.spv"), vk::ShaderStageFlags::VERTEX);
+    let shader_create_infos = [
+        frag_create_info,
+        vert_create_info
+    ];
 
     // let frag = shader_module(&device, "D:/cur/render_rs/vk_rs/src/shader/frag.spv");
 
-    let a = vk::PipelineShaderStageCreateInfo::default()
-        .stage(vk::ShaderStageFlags::FRAGMENT)
-        .name(chars(b"tri\0"))
-        .module(frag);
-    let b = vk::PipelineShaderStageCreateInfo::default()
-        .stage(vk::ShaderStageFlags::VERTEX)
-        .name(chars(b"tri\0"))
-        .module(vert);
+    let vertex_input_create_info = vk::PipelineVertexInputStateCreateInfo::default();
 
-    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default();
-
-    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::default()
+    let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
-    let extent = device_properties.surface_capabilities.current_extent;
-    let scissors = [
-        vk::Rect2D::from(extent)
+    let dynamic_states = [
+        vk::DynamicState::VIEWPORT,
+        vk::DynamicState::SCISSOR
     ];
-    let viewports = [
-        vk::Viewport::default()
-            .x(0.)
-            .y(0.)
-            .height(extent.height as f32)
-            .width(extent.width as f32)
-            .min_depth(0.)
-            .max_depth(1.)
-    ];
+    let dynamic_state_create_info = vk::PipelineDynamicStateCreateInfo::default()
+        .dynamic_states(&dynamic_states);
+
     let viewport_create_info = vk::PipelineViewportStateCreateInfo::default()
-        .scissors(&scissors)
-        .viewports(&viewports);
+        .viewport_count(1)
+        .scissor_count(1);
 
     let rasterization_create_info = vk::PipelineRasterizationStateCreateInfo::default()
         .depth_clamp_enable(false)
@@ -419,10 +426,10 @@ fn main() {
             .dst_color_blend_factor(vk::BlendFactor::ZERO)
             .src_alpha_blend_factor(vk::BlendFactor::ONE)
             .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
-            // .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
-            // .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            // .src_alpha_blend_factor(vk::BlendFactor::ONE)
-            // .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+        // .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+        // .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        // .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        // .dst_alpha_blend_factor(vk::BlendFactor::ONE)
     ];
 
     let color_blend_create_info = vk::PipelineColorBlendStateCreateInfo::default()
@@ -430,7 +437,173 @@ fn main() {
         .logic_op(vk::LogicOp::COPY)
         .attachments(&color_blend_attachment);
 
-    let pipeline_layout = create_pipeline_layout(&device);
+    let pipeline_layout = create_pipeline_layout(device);
+
+    let pipeline_create_info = [
+        vk::GraphicsPipelineCreateInfo::default()
+            .stages(&shader_create_infos)
+            .vertex_input_state(&vertex_input_create_info)
+            .input_assembly_state(&input_assembly_create_info)
+            .viewport_state(&viewport_create_info)
+            .rasterization_state(&rasterization_create_info)
+            .multisample_state(&multisample_create_info)
+            // .depth_stencil_state(&depth_state_info)
+            .color_blend_state(&color_blend_create_info)
+            .dynamic_state(&dynamic_state_create_info)
+            .layout(pipeline_layout)
+            .render_pass(*render_pass)
+            .base_pipeline_index(-1)
+    ];
+
+    unsafe {
+        device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info, None)
+            .expect("create graphics pipeline")
+    }
+}
+
+fn create_frame_buffer(
+    device: &Device,
+    render_pass: &vk::RenderPass,
+    image_views: &Vec<vk::ImageView>,
+    device_properties: &VKPhysicalDeviceProperties
+) -> Vec<vk::Framebuffer> {
+
+    let swapchain_extent = device_properties.surface_capabilities.current_extent;
+    image_views.iter().map(|&image_view| {
+        let attachments = [image_view];
+        let frame_buffer_create_info = vk::FramebufferCreateInfo::default()
+            .render_pass(*render_pass)
+            .attachments(&attachments)
+            .width(swapchain_extent.width)
+            .height(swapchain_extent.height)
+            .layers(1);
+
+        unsafe { device.create_framebuffer(&frame_buffer_create_info, None).expect("create frame buffer") }
+    }).collect()
+}
+
+fn create_command_pool(device: &Device, queue_family_index: u32) -> vk::CommandPool {
+
+    let pool_create_info = vk::CommandPoolCreateInfo::default()
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+        .queue_family_index(queue_family_index);
+
+    unsafe { device.create_command_pool(&pool_create_info, None).expect("create command pool") }
+}
+
+fn command_buffer_allocate(device: &Device, pool: &vk::CommandPool) -> Vec<vk::CommandBuffer> {
+
+    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(2)
+        .command_pool(*pool);
+
+    unsafe {
+        device.allocate_command_buffers(&command_buffer_allocate_info).expect("create command buffer")
+    }
+}
+
+fn record_command_buffer(
+    device: &Device,
+    render_pass: &vk::RenderPass,
+    framebuffers: Vec<vk::Framebuffer>,
+    command_buffer: &vk::CommandBuffer,
+    graphic_pipeline: &vk::Pipeline,
+    device_properties: &VKPhysicalDeviceProperties
+) {
+    let frame_index = 0;
+
+    let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
+        .flags(vk::CommandBufferUsageFlags::default());
+
+    unsafe {
+        device.begin_command_buffer(*command_buffer, &command_buffer_begin_info).expect("begin command buffer");
+    }
+
+    let mut clear_values = [vk::ClearValue::default()];
+    clear_values[0].color.float32 = [0.,0.,0.,0.];
+    let render_pass_begin_info = vk::RenderPassBeginInfo::default()
+        .render_pass(*render_pass)
+        .framebuffer(framebuffers[frame_index])
+        .render_area(device_properties.surface_capabilities.current_extent.into())
+        .clear_values(&clear_values);
+
+    let swapchain_extent = device_properties.surface_capabilities.current_extent;
+    let scissors = [
+        vk::Rect2D::from(swapchain_extent)
+    ];
+    let viewports = [
+        vk::Viewport::default()
+            .x(0.)
+            .y(0.)
+            .height(swapchain_extent.height as f32)
+            .width(swapchain_extent.width as f32)
+            .min_depth(0.)
+            .max_depth(1.)
+    ];
+    let viewport_create_info = vk::PipelineViewportStateCreateInfo::default()
+        .scissors(&scissors)
+        .viewports(&viewports);
+
+
+    unsafe {
+        device.cmd_set_viewport(*command_buffer, 0, &viewports);
+        device.cmd_set_scissor(*command_buffer, 0, &scissors);
+        device.cmd_begin_render_pass(
+            *command_buffer,
+            &render_pass_begin_info,
+            vk::SubpassContents::INLINE,
+        );
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            *graphic_pipeline
+        );
+        device.cmd_draw(
+            *command_buffer,
+            3,
+            1,
+            0,
+            0
+        );
+        device.cmd_end_render_pass(*command_buffer);
+        device.end_command_buffer(*command_buffer).expect("end command buffer");
+    }
+}
+
+fn main() {
+    let entry = Entry::linked();
+
+    let instance = create_instance(&entry).unwrap();
+    let debug_messenger = debug_init(&entry, &instance);
+
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("window!")
+        .with_inner_size(winit::dpi::LogicalSize::new(800, 800))
+        .build(&event_loop)
+        .unwrap();
+
+    let surface_handle = khr::Surface::new(&entry, &instance);
+    let surface = create_vk_surface(&entry, &window, &instance).unwrap();
+
+    let device_properties = enumerate_device(&instance, &surface, &surface_handle);
+
+    let features = vk::PhysicalDeviceFeatures::default();
+    let extensions = vec![khr::Swapchain::name().as_ptr()];
+    let (device, queue) = create_device(&instance, &device_properties, &extensions, &features);
+
+    let swapchain_loader = khr::Swapchain::new(&instance, &device);
+    let swapchain = create_swapchain(&swapchain_loader, &surface, &device_properties);
+
+    let (swapchain_image, image_views) = create_image_views(&device, &swapchain, &swapchain_loader, &device_properties);
+
+    let render_pass = create_render_pass(&device, &device_properties);
+
+    let graphics_pipelines = create_graphic_pipeline(&device, &render_pass, &device_properties);
+
+    let frame_buffers = create_frame_buffer(&device, &render_pass, &image_views, &device_properties);
+
 
 
     event_loop.run(move |event, _, control_flow| {
