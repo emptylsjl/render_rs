@@ -16,6 +16,8 @@ use std::sync::Arc;
 
 use ash::{*, prelude::VkResult};
 use ash::extensions::{khr, ext};
+use ash::extensions::ext::DebugUtils;
+use ash::vk::DebugUtilsMessengerEXT;
 use winit::{
     event::{Event::*, WindowEvent as WE, DeviceEvent},
     event_loop::EventLoop,
@@ -24,6 +26,8 @@ use winit::{
 use winit::window::Window;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle, RawWindowHandle};
 use smallvec::{smallvec, SmallVec};
+use winit::event::VirtualKeyCode::N;
+use winit::platform::run_return::EventLoopExtRunReturn;
 
 mod define;
 use define::*;
@@ -99,7 +103,7 @@ fn create_instance(entry: &Entry) -> Result<Arc<Instance>, Box<dyn Error>> {
     ))
 }
 
-fn debug_init(entry: &Entry, instance: &Instance) -> vk::DebugUtilsMessengerEXT {
+fn debug_init(entry: &Entry, instance: &Instance) -> (DebugUtilsMessengerEXT, DebugUtils) {
     let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
         .message_severity(
             vk::DebugUtilsMessageSeverityFlagsEXT::ERROR |
@@ -114,12 +118,13 @@ fn debug_init(entry: &Entry, instance: &Instance) -> vk::DebugUtilsMessengerEXT 
         )
         .pfn_user_callback(Some(debug_callback));
 
-    let debug_loader = ext::DebugUtils::new(&entry, &instance);
-    unsafe {
-        debug_loader
+    let debug_utils = ext::DebugUtils::new(&entry, &instance);
+    unsafe {(
+        debug_utils
             .create_debug_utils_messenger(&debug_info, None)
-            .unwrap()
-    }
+            .unwrap(),
+        debug_utils,
+    )}
 }
 
 #[cfg(target_os = "windows")]
@@ -219,7 +224,7 @@ fn create_device(
 }
 
 fn create_swapchain(
-    swapchain_loader : &khr::Swapchain,
+    swapchain_proc : &khr::Swapchain,
     surface: &vk::SurfaceKHR,
     device_properties: &VKPhysicalDeviceProperties
 ) -> vk::SwapchainKHR {
@@ -254,17 +259,17 @@ fn create_swapchain(
         .image_array_layers(1);
 
     unsafe {
-        swapchain_loader.create_swapchain(&swapchain_create_info, None).expect("create swapchain")
+        swapchain_proc.create_swapchain(&swapchain_create_info, None).expect("create swapchain")
     }
 }
 
 fn create_image_views(
     device: &Device,
     swapchain: &vk::SwapchainKHR,
-    swapchain_loader : &khr::Swapchain,
+    swapchain_proc : &khr::Swapchain,
     device_properties: &VKPhysicalDeviceProperties
 ) -> (Vec<vk::Image>, Vec<vk::ImageView>) {
-    let swapchain_image = unsafe { swapchain_loader.get_swapchain_images(*swapchain) }.expect("create swapchain image");
+    let swapchain_image = unsafe { swapchain_proc.get_swapchain_images(*swapchain) }.expect("create swapchain image");
     let image_views = swapchain_image
         .iter()
         .map(|&image| {
@@ -383,17 +388,9 @@ fn create_render_pass(device: &Device, device_properties: &VKPhysicalDevicePrope
 fn create_graphic_pipeline(
     device: &Device,
     render_pass: &vk::RenderPass,
-    device_properties: &VKPhysicalDeviceProperties
+    pipeline_layout: &vk::PipelineLayout,
+    shader_create_infos: &[vk::PipelineShaderStageCreateInfo],
 ) -> Vec<vk::Pipeline> {
-
-    let frag_create_info = create_shader_module(device, include_bytes!("shader/frag.spv"), vk::ShaderStageFlags::FRAGMENT);
-    let vert_create_info = create_shader_module(device, include_bytes!("shader/vert.spv"), vk::ShaderStageFlags::VERTEX);
-    let shader_create_infos = [
-        frag_create_info,
-        vert_create_info
-    ];
-
-    // let frag = shader_module(&device, "D:/cur/render_rs/vk_rs/src/shader/frag.spv");
 
     let vertex_input_create_info = vk::PipelineVertexInputStateCreateInfo::default();
 
@@ -445,8 +442,6 @@ fn create_graphic_pipeline(
         .logic_op(vk::LogicOp::COPY)
         .attachments(&color_blend_attachment);
 
-    let pipeline_layout = create_pipeline_layout(device);
-
     let pipeline_create_info = [
         vk::GraphicsPipelineCreateInfo::default()
             .stages(&shader_create_infos)
@@ -458,14 +453,16 @@ fn create_graphic_pipeline(
             // .depth_stencil_state(&depth_state_info)
             .color_blend_state(&color_blend_create_info)
             .dynamic_state(&dynamic_state_create_info)
-            .layout(pipeline_layout)
+            .layout(*pipeline_layout)
             .render_pass(*render_pass)
             .base_pipeline_index(-1)
     ];
 
     unsafe {
-        device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info, None)
-            .expect("create graphics pipeline")
+        (
+            device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info, None)
+                .expect("create graphics pipeline")
+        )
     }
 }
 
@@ -574,36 +571,48 @@ fn record_command_buffer(
     }
 }
 
+fn iter_destory<T: Copy, F: Fn(T)>(objects: Vec<T>, f: F) {
+    objects.iter().for_each(|&x| f(x))
+}
+
 fn main() {
     let entry = Entry::linked();
 
     let instance = create_instance(&entry).unwrap();
-    let debug_messenger = debug_init(&entry, &instance);
+    let (debug_messenger, debug_utils) = debug_init(&entry, &instance);
 
-    let event_loop = EventLoop::new();
+    let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("window!")
         .with_inner_size(winit::dpi::LogicalSize::new(800, 800))
         .build(&event_loop)
         .unwrap();
 
-    let surface_handle = khr::Surface::new(&entry, &instance);
+    let surface_proc = khr::Surface::new(&entry, &instance);
     let surface = create_vk_surface(&entry, &window, &instance).unwrap();
 
-    let device_properties = enumerate_device(&instance, &surface, &surface_handle);
+    let device_properties = enumerate_device(&instance, &surface, &surface_proc);
 
     let features = vk::PhysicalDeviceFeatures::default();
     let extensions = vec![khr::Swapchain::name().as_ptr()];
     let (device, queue) = create_device(&instance, &device_properties, &extensions, &features);
 
-    let swapchain_loader = khr::Swapchain::new(&instance, &device);
-    let swapchain = create_swapchain(&swapchain_loader, &surface, &device_properties);
+    let swapchain_proc = khr::Swapchain::new(&instance, &device);
+    let swapchain = create_swapchain(&swapchain_proc, &surface, &device_properties);
 
-    let (swapchain_image, image_views) = create_image_views(&device, &swapchain, &swapchain_loader, &device_properties);
+    let (swapchain_image, image_views) = create_image_views(&device, &swapchain, &swapchain_proc, &device_properties);
 
     let render_pass = create_render_pass(&device, &device_properties);
 
-    let graphic_pipelines = create_graphic_pipeline(&device, &render_pass, &device_properties);
+
+    let frag_create_info = create_shader_module(&device, include_bytes!("shader/frag.spv"), vk::ShaderStageFlags::FRAGMENT);
+    let vert_create_info = create_shader_module(&device, include_bytes!("shader/vert.spv"), vk::ShaderStageFlags::VERTEX);
+    let shader_create_infos = [
+        frag_create_info,
+        vert_create_info
+    ];
+    let pipeline_layout = create_pipeline_layout(&device);
+    let graphic_pipelines = create_graphic_pipeline(&device, &render_pass, &pipeline_layout, &shader_create_infos);
 
     let framebuffers = create_frame_buffer(&device, &render_pass, &image_views, &device_properties);
 
@@ -618,25 +627,35 @@ fn main() {
     // let setup_commands_reuse_fence = device.create_fence(&fence_create_info, None).expect("create fence");
 
     let (
-        draw_end_fence, image_available_semaphore, draw_end_semaphore
+        draw_end_fences, image_available_semaphores, draw_end_semaphores
     ) = unsafe {(
         // device.create_fence(&fence_create_info, None).expect("create fence"),
-        device.create_fence(&fence_create_info, None).expect("create fence"),
-        device.create_semaphore(&semaphore_create_info, None).expect("create semaphore"),
-        device.create_semaphore(&semaphore_create_info, None).expect("create semaphore")
+        [
+            device.create_fence(&fence_create_info, None).expect("create fence"),
+            device.create_fence(&fence_create_info, None).expect("create fence")
+        ],
+        [
+            device.create_semaphore(&semaphore_create_info, None).expect("create semaphore"),
+            device.create_semaphore(&semaphore_create_info, None).expect("create semaphore")
+        ],
+        [
+            device.create_semaphore(&semaphore_create_info, None).expect("create semaphore"),
+            device.create_semaphore(&semaphore_create_info, None).expect("create semaphore")
+        ]
     ) };
 
+    let mut index: usize = 0;
 
-    event_loop.run(move |event, _, control_flow| {
-        println!("233");
+    let draw = |frame_index| {
         unsafe {
-            device.wait_for_fences(&[draw_end_fence], true, 100000000).expect("Wait for fence failed.");
-            device.reset_fences(&[draw_end_fence]).expect("Reset fences failed.");
-            let (image_index, _) = swapchain_loader
-                .acquire_next_image(swapchain, 100000000, image_available_semaphore, vk::Fence::null())
+            device.wait_for_fences(&[draw_end_fences[frame_index]], true, 100000000).expect("Wait for fence failed.");
+            device.reset_fences(&[draw_end_fences[frame_index]]).expect("Reset fences failed.");
+            let (image_index, _) = swapchain_proc
+                .acquire_next_image(swapchain, 100000000, image_available_semaphores[frame_index], vk::Fence::null())
                 .expect("acquire image");
+            // print!("{image_index} ");
 
-            let command_buffer = command_buffers[0];
+            let command_buffer = command_buffers[frame_index];
             let graphic_pipeline = graphic_pipelines[0];
             device.reset_command_buffer(
                 command_buffer,
@@ -652,8 +671,8 @@ fn main() {
                 &device_properties
             );
 
-            let wait_semaphores = [image_available_semaphore];
-            let signal_semaphores = [draw_end_semaphore];
+            let wait_semaphores = [image_available_semaphores[frame_index]];
+            let signal_semaphores = [draw_end_semaphores[frame_index]];
             let command_bufferss = [command_buffer];
             let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
             let submit_info = vk::SubmitInfo::default()
@@ -661,7 +680,7 @@ fn main() {
                 .wait_dst_stage_mask(&wait_stages)
                 .command_buffers(&command_bufferss)
                 .signal_semaphores(&signal_semaphores);
-            device.queue_submit(queue, &[submit_info], draw_end_fence).expect("queue submit");
+            device.queue_submit(queue, &[submit_info], draw_end_fences[frame_index]).expect("queue submit");
 
             let swapchains = [swapchain];
             let image_indexes = [image_index];
@@ -670,44 +689,75 @@ fn main() {
                 .swapchains(&swapchains)
                 .image_indices(&image_indexes);
 
-            swapchain_loader
+            swapchain_proc
                 .queue_present(queue, &present_info)
                 .unwrap();
         }
 
+    };
+
+    event_loop.run_return(|event, win_target, control_flow| {
+
+        draw(index % 2);
+        index += 1;
+        print!("{index} ");
+
+        control_flow.set_wait();
+
         if let WindowEvent { event: WE::CloseRequested, .. } = event {
             control_flow.set_exit()
         }
-        control_flow.set_wait();
 
-    //     match event {
-    //         WindowEvent { event, window_id } => {
-    //             match event {
-    //                 WE::CloseRequested => control_flow.set_exit(),
-    //                 WE::KeyboardInput { input, is_synthetic, .. } => {
-    //                     println!("{input:?}, {is_synthetic:?}")
-    //                 }
-    //                 WE::MouseInput { state, button, .. } => {
-    //                     println!("{button:?}, {state:?}")
-    //                 }
-    //                 WE::CursorMoved { position, .. } => {
-    //                     println!("{position:?}")
-    //                 }
-    //                 _ => {}
-    //             }
-    //         },
-    //         DeviceEvent {event, device_id} => {
-    //             match event {
-    //                 DE::MouseMotion { delta } => { println!("{delta:?}"); }
-    //                 DE::Button { button, state } => { println!("{button:?}, {state:?}") }
-    //                 _ => {}
-    //             }
-    //         }
-    //         MainEventsCleared => {
-    //             window.request_redraw();
-    //             // println!("233");
-    //         }
-    //         _ => (),
-    //     }
+        // match event {
+        //     WindowEvent { event, window_id } => {
+        //         match event {
+        //             WE::CloseRequested => control_flow.set_exit(),
+        //             WE::KeyboardInput { input, is_synthetic, .. } => {
+        //                 println!("{input:?}, {is_synthetic:?}")
+        //             }
+        //             WE::MouseInput { state, button, .. } => {
+        //                 println!("{button:?}, {state:?}")
+        //             }
+        //             WE::CursorMoved { position, .. } => {
+        //                 println!("{position:?}")
+        //             }
+        //             _ => {}
+        //         }
+        //     },
+        //     DeviceEvent {event, device_id} => {
+        //         match event {
+        //             DE::MouseMotion { delta } => { println!("{delta:?}"); }
+        //             DE::Button { button, state } => { println!("{button:?}, {state:?}") }
+        //             _ => {}
+        //         }
+        //     }
+        //     MainEventsCleared => {
+        //         window.request_redraw();
+        //         // println!("233");
+        //     }
+        //     _ => (),
+        // }
     });
+
+    unsafe {
+        device.device_wait_idle().expect("wait idle");
+
+        image_views.iter().for_each(|&image| device.destroy_image_view(image, None));
+        framebuffers.iter().for_each( |&frame| device.destroy_framebuffer(frame, None));
+        draw_end_fences.iter().for_each( |&fence| device.destroy_fence(fence, None));
+        graphic_pipelines.iter().for_each(|&pipeline| device.destroy_pipeline(pipeline, None));
+        shader_create_infos.iter().for_each(|&shader| device.destroy_shader_module(shader.module, None));
+        draw_end_semaphores.iter().for_each( |&semaphore| device.destroy_semaphore(semaphore, None));
+        image_available_semaphores.iter().for_each( |&semaphore| device.destroy_semaphore(semaphore, None));
+
+        swapchain_proc.destroy_swapchain(swapchain, None);
+        surface_proc.destroy_surface(surface, None);
+        device.destroy_pipeline_layout(pipeline_layout, None);
+        device.destroy_render_pass(render_pass, None);
+        device.destroy_command_pool(command_pool, None);
+        device.destroy_device(None);
+        debug_utils.destroy_debug_utils_messenger(debug_messenger, None);
+        instance.destroy_instance(None);
+
+    }
 }
