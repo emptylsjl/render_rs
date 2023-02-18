@@ -19,7 +19,7 @@ use ash::extensions::{khr, ext};
 use ash::extensions::ext::DebugUtils;
 use ash::vk::DebugUtilsMessengerEXT;
 use winit::{
-    event::{Event::*, WindowEvent as WE, DeviceEvent},
+    event::{Event, DeviceEvent as DE, WindowEvent as WE},
     event_loop::EventLoop,
     window::WindowBuilder,
 };
@@ -138,7 +138,7 @@ fn create_vk_surface<Handle: HasRawWindowHandle + HasRawDisplayHandle>(
             let surface_desc = vk::Win32SurfaceCreateInfoKHR::default()
                 .hinstance(handle.hinstance)
                 .hwnd(handle.hwnd);
-            let surface_fn = ash::extensions::khr::Win32Surface::new(entry, instance);
+            let surface_fn = khr::Win32Surface::new(entry, instance);
             surface_fn.create_win32_surface(&surface_desc, None)
         }
 
@@ -257,6 +257,7 @@ fn create_swapchain(
         .present_mode(present)
         .clipped(true)
         .image_array_layers(1);
+    println!("{:?}", extent);
 
     unsafe {
         swapchain_proc.create_swapchain(&swapchain_create_info, None).expect("create swapchain")
@@ -584,7 +585,7 @@ fn main() {
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("window!")
-        .with_inner_size(winit::dpi::LogicalSize::new(800, 800))
+        .with_inner_size(winit::dpi::LogicalSize::new(1000, 1000))
         .build(&event_loop)
         .unwrap();
 
@@ -650,10 +651,10 @@ fn main() {
         unsafe {
             device.wait_for_fences(&[draw_end_fences[frame_index]], true, 100000000).expect("Wait for fence failed.");
             device.reset_fences(&[draw_end_fences[frame_index]]).expect("Reset fences failed.");
-            let (image_index, _) = swapchain_proc
+            let (image_index, suboptimal) = swapchain_proc
                 .acquire_next_image(swapchain, 100000000, image_available_semaphores[frame_index], vk::Fence::null())
                 .expect("acquire image");
-            // print!("{image_index} ");
+            print!("{suboptimal} - {frame_index}\n");
 
             let command_buffer = command_buffers[frame_index];
             let graphic_pipeline = graphic_pipelines[0];
@@ -692,51 +693,54 @@ fn main() {
             swapchain_proc
                 .queue_present(queue, &present_info)
                 .unwrap();
+
+            device.device_wait_idle().expect("wait idle");
         }
 
     };
 
-    event_loop.run_return(|event, win_target, control_flow| {
-
-        draw(index % 2);
-        index += 1;
-        print!("{index} ");
+    event_loop.run_return(|event, _, control_flow| {
+        // println!("{event:?}");
 
         control_flow.set_wait();
 
-        if let WindowEvent { event: WE::CloseRequested, .. } = event {
-            control_flow.set_exit()
-        }
 
-        // match event {
-        //     WindowEvent { event, window_id } => {
-        //         match event {
-        //             WE::CloseRequested => control_flow.set_exit(),
-        //             WE::KeyboardInput { input, is_synthetic, .. } => {
-        //                 println!("{input:?}, {is_synthetic:?}")
-        //             }
-        //             WE::MouseInput { state, button, .. } => {
-        //                 println!("{button:?}, {state:?}")
-        //             }
-        //             WE::CursorMoved { position, .. } => {
-        //                 println!("{position:?}")
-        //             }
-        //             _ => {}
-        //         }
-        //     },
-        //     DeviceEvent {event, device_id} => {
-        //         match event {
-        //             DE::MouseMotion { delta } => { println!("{delta:?}"); }
-        //             DE::Button { button, state } => { println!("{button:?}, {state:?}") }
-        //             _ => {}
-        //         }
-        //     }
-        //     MainEventsCleared => {
-        //         window.request_redraw();
-        //         // println!("233");
-        //     }
-        //     _ => (),
-        // }
+        match event {
+            Event::WindowEvent { event, window_id } => {
+                match event {
+                    WE::CloseRequested => {
+                        control_flow.set_exit()
+                    }
+                    // WE::KeyboardInput { input, is_synthetic, .. } => {
+                    //     println!("{input:?}, {is_synthetic:?}")
+                    // }
+                    // WE::MouseInput { state, button, .. } => {
+                    //     println!("{button:?}, {state:?}")
+                    // }
+                    // WE::CursorMoved { position, .. } => {
+                    //     println!("{position:?}")
+                    // }
+                    _ => {}
+                }
+            },
+            // Event::DeviceEvent {event, device_id} => {
+            //     match event {
+            //         // DE::MouseMotion { delta } => {
+            //         //     println!("{delta:?}");
+            //         // }
+            //         // DE::Button { button, state } => {
+            //         //     println!("{button:?}, {state:?}")
+            //         // }
+            //         _ => {}
+            //     }
+            // }
+            Event::MainEventsCleared => {
+                draw(index % 2);
+                index += 1;
+                // println!("233");
+            }
+            _ => (),
+        }
     });
 
     unsafe {
