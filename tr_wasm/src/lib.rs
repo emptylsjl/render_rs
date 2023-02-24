@@ -176,14 +176,3 @@ pub fn draw(obj: Obj, rctx: &Ctx, opt: JsValue) -> Result<(), JsValue>{
     log_1(&stat.draw_count.into());
     Ok(())
 }
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-
-    }
-}

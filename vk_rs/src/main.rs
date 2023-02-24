@@ -26,11 +26,15 @@ use winit::{
 use winit::window::Window;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle, RawWindowHandle};
 use smallvec::{smallvec, SmallVec};
-use winit::event::VirtualKeyCode::N;
+use winit::event::VirtualKeyCode;
 use winit::platform::run_return::EventLoopExtRunReturn;
 
 mod define;
+mod vk_proc;
+mod present;
+
 use define::*;
+
 
 fn chars(s: &[u8]) -> &CStr {
     CStr::from_bytes_with_nul(s).unwrap()
@@ -55,16 +59,19 @@ unsafe extern "system" fn debug_callback(
     vk::FALSE
 }
 
-fn create_instance(entry: &Entry) -> Result<Arc<Instance>, Box<dyn Error>> {
 
-    let layer_names = entry.enumerate_instance_layer_properties()?;
-    let extension_names = entry.enumerate_instance_extension_properties(Some(chars(b"\0")))?;
+pub fn create_instance(entry: &Entry) -> Instance {
+
+    let layer_props = entry.enumerate_instance_layer_properties()
+        .expect("iter instance layers");
+    let extension_props = entry.enumerate_instance_extension_properties(Some(chars(b"\0")))
+        .expect("iter instance extension");
 
     let required_extension = vec![
         khr::Surface::name().as_ptr(),
-        ash::extensions::khr::Win32Surface::name().as_ptr(),
-        ash::extensions::khr::GetSurfaceCapabilities2::name().as_ptr(),
-        ash::extensions::khr::GetPhysicalDeviceProperties2::name().as_ptr(),
+        khr::Win32Surface::name().as_ptr(),
+        khr::GetSurfaceCapabilities2::name().as_ptr(),
+        khr::GetPhysicalDeviceProperties2::name().as_ptr(),
         ext::DebugUtils::name().as_ptr(),
     ];
 
@@ -72,17 +79,6 @@ fn create_instance(entry: &Entry) -> Result<Arc<Instance>, Box<dyn Error>> {
     let required_layers = [
         chars(b"VK_LAYER_KHRONOS_validation\0").as_ptr()
     ];
-
-    // assert!(
-    //     required_extension.iter().all(|x| extension_names.contains(x)),
-    //     "required extension not present"
-    // );
-    // assert!(
-    //     required_layers.iter().all(|x| layer_names.contains(x)),
-    //     "required layer not present"
-    // );
-    // let a = extension_names.contains(&required_extension[0]);
-    // let b = layer_names.contains(&required_layers[0]);
 
 
     let app_info = vk::ApplicationInfo::default()
@@ -98,12 +94,10 @@ fn create_instance(entry: &Entry) -> Result<Arc<Instance>, Box<dyn Error>> {
         .enabled_extension_names(&required_extension)
         .flags(vk::InstanceCreateFlags::default());
 
-    Ok(Arc::new(
-        unsafe { entry.create_instance(&instance_info, None)? }
-    ))
+    unsafe { entry.create_instance(&instance_info, None).expect("create instance") }
 }
 
-fn debug_init(entry: &Entry, instance: &Instance) -> (DebugUtilsMessengerEXT, DebugUtils) {
+fn debug_init(debug_utils: &ext::DebugUtils) -> VkResult<DebugUtilsMessengerEXT> {
     let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
         .message_severity(
             vk::DebugUtilsMessageSeverityFlagsEXT::ERROR |
@@ -118,31 +112,8 @@ fn debug_init(entry: &Entry, instance: &Instance) -> (DebugUtilsMessengerEXT, De
         )
         .pfn_user_callback(Some(debug_callback));
 
-    let debug_utils = ext::DebugUtils::new(&entry, &instance);
-    unsafe {(
-        debug_utils
-            .create_debug_utils_messenger(&debug_info, None)
-            .unwrap(),
-        debug_utils,
-    )}
-}
-
-#[cfg(target_os = "windows")]
-fn create_vk_surface<Handle: HasRawWindowHandle + HasRawDisplayHandle>(
-    entry: &Entry,
-    window: &Handle,
-    instance: &Instance,
-) -> VkResult<vk::SurfaceKHR>  {
-    match window.raw_window_handle() {
-        RawWindowHandle::Win32(handle) => unsafe {
-            let surface_desc = vk::Win32SurfaceCreateInfoKHR::default()
-                .hinstance(handle.hinstance)
-                .hwnd(handle.hwnd);
-            let surface_fn = khr::Win32Surface::new(entry, instance);
-            surface_fn.create_win32_surface(&surface_desc, None)
-        }
-
-        _ => Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT),
+    unsafe {
+        debug_utils.create_debug_utils_messenger(&debug_info, None)
     }
 }
 
@@ -160,7 +131,7 @@ struct VKPhysicalDeviceProperties {
     graphic_index: u32
 }
 
-fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_handle: &khr::Surface) -> VKPhysicalDeviceProperties {
+fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_proc: &khr::Surface) -> Option<VKPhysicalDeviceProperties> {
     unsafe {
         instance.enumerate_physical_devices().unwrap()
             .into_iter()
@@ -168,7 +139,7 @@ fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_handl
                 let queues = instance.get_physical_device_queue_family_properties(physical_device);
                 let graphic_index = queues.iter().enumerate()
                     .find(|(i, queue)| {
-                        surface_handle.get_physical_device_surface_support(physical_device, *i as u32, *surface).unwrap() &&
+                        surface_proc.get_physical_device_surface_support(physical_device, *i as u32, *surface).unwrap() &&
                         queue.queue_flags.contains(vk::QueueFlags::GRAPHICS)
                     }).unwrap().0 as u32;
                 VKPhysicalDeviceProperties {
@@ -180,9 +151,9 @@ fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_handl
                     memory_properties: instance.get_physical_device_memory_properties(physical_device),
                     layers_properties: instance.enumerate_device_layer_properties(physical_device).unwrap(),
                     extensions_properties: instance.enumerate_device_extension_properties(physical_device).unwrap(),
-                    surface_formats: surface_handle.get_physical_device_surface_formats(physical_device, *surface).unwrap(),
-                    surface_present: surface_handle.get_physical_device_surface_present_modes(physical_device, *surface).unwrap(),
-                    surface_capabilities: surface_handle.get_physical_device_surface_capabilities(physical_device, *surface).unwrap()
+                    surface_formats: surface_proc.get_physical_device_surface_formats(physical_device, *surface).unwrap(),
+                    surface_present: surface_proc.get_physical_device_surface_present_modes(physical_device, *surface).unwrap(),
+                    surface_capabilities: surface_proc.get_physical_device_surface_capabilities(physical_device, *surface).unwrap()
                 }
             })
             .max_by_key(|device| match device.properties.device_type {
@@ -193,7 +164,7 @@ fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_handl
                 vk::PhysicalDeviceType::OTHER => 1,
                 _ => 0
             })
-            .unwrap()
+            // .expect("select device")
     }
 }
 
@@ -223,6 +194,27 @@ fn create_device(
     }
 }
 
+
+#[cfg(target_os = "windows")]
+fn create_vk_surface<Handle: HasRawWindowHandle + HasRawDisplayHandle>(
+    entry: &Entry,
+    window: &Handle,
+    instance: &Instance,
+) -> VkResult<vk::SurfaceKHR>  {
+    match window.raw_window_handle() {
+        RawWindowHandle::Win32(handle) => unsafe {
+            let surface_desc = vk::Win32SurfaceCreateInfoKHR::default()
+                .hinstance(handle.hinstance)
+                .hwnd(handle.hwnd);
+            let surface_fn = khr::Win32Surface::new(entry, instance);
+            surface_fn.create_win32_surface(&surface_desc, None)
+        }
+
+        _ => Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT),
+    }
+}
+
+
 fn create_swapchain(
     swapchain_proc : &khr::Swapchain,
     surface: &vk::SurfaceKHR,
@@ -236,8 +228,7 @@ fn create_swapchain(
             vk::PresentModeKHR::FIFO => 1,
             _ => 0
         })
-        .unwrap()
-        .clone();
+        .unwrap();
 
     let extent = device_properties.surface_capabilities.current_extent;
     let format = device_properties.surface_formats[0];
@@ -254,10 +245,9 @@ fn create_swapchain(
         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
         .pre_transform(transform)
         .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(present)
+        .present_mode(*present)
         .clipped(true)
         .image_array_layers(1);
-    println!("{:?}", extent);
 
     unsafe {
         swapchain_proc.create_swapchain(&swapchain_create_info, None).expect("create swapchain")
@@ -577,10 +567,12 @@ fn iter_destory<T: Copy, F: Fn(T)>(objects: Vec<T>, f: F) {
 }
 
 fn main() {
-    let entry = Entry::linked();
 
-    let instance = create_instance(&entry).unwrap();
-    let (debug_messenger, debug_utils) = debug_init(&entry, &instance);
+    let entry = Entry::linked();
+    let instance = create_instance(&entry);
+
+    let debug_utils = ext::DebugUtils::new(&entry, &instance);
+    let debug_messenger = debug_init(&debug_utils).expect("create debug callback");
 
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -592,7 +584,7 @@ fn main() {
     let surface_proc = khr::Surface::new(&entry, &instance);
     let surface = create_vk_surface(&entry, &window, &instance).unwrap();
 
-    let device_properties = enumerate_device(&instance, &surface, &surface_proc);
+    let device_properties = enumerate_device(&instance, &surface, &surface_proc).expect("find device");
 
     let features = vk::PhysicalDeviceFeatures::default();
     let extensions = vec![khr::Swapchain::name().as_ptr()];
@@ -649,12 +641,13 @@ fn main() {
 
     let draw = |frame_index| {
         unsafe {
-            device.wait_for_fences(&[draw_end_fences[frame_index]], true, 100000000).expect("Wait for fence failed.");
+            device.wait_for_fences(&[draw_end_fences[frame_index]], true, u64::MAX).expect("Wait for fence failed.");
             device.reset_fences(&[draw_end_fences[frame_index]]).expect("Reset fences failed.");
             let (image_index, suboptimal) = swapchain_proc
-                .acquire_next_image(swapchain, 100000000, image_available_semaphores[frame_index], vk::Fence::null())
+                .acquire_next_image(swapchain, u64::MAX, image_available_semaphores[frame_index], vk::Fence::null())
                 .expect("acquire image");
-            print!("{suboptimal} - {frame_index}\n");
+            let capabilities = surface_proc.get_physical_device_surface_capabilities(device_properties.physical_device, surface).unwrap();
+            print!("{suboptimal} - {frame_index} - {:?}\n", capabilities.current_extent);
 
             let command_buffer = command_buffers[frame_index];
             let graphic_pipeline = graphic_pipelines[0];
@@ -710,6 +703,9 @@ fn main() {
                 match event {
                     WE::CloseRequested => {
                         control_flow.set_exit()
+                    }
+                    WE::Resized(a) => {
+                        println!("{a:?}");
                     }
                     // WE::KeyboardInput { input, is_synthetic, .. } => {
                     //     println!("{input:?}, {is_synthetic:?}")
