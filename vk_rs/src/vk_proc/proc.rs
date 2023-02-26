@@ -105,14 +105,14 @@ fn instance_create(entry: &Entry) -> Instance {
     ];
 
 
-    let app_info = vk::ApplicationInfo::builder()
+    let app_info = vk::ApplicationInfo::default()
         .application_name(app_name)
         .application_version(0)
         .engine_name(app_name)
         .engine_version(0)
         .api_version(vk::make_api_version(0, 1, 0, 0));
 
-    let instance_info = vk::InstanceCreateInfo::builder()
+    let instance_info = vk::InstanceCreateInfo::default()
         .application_info(&app_info)
         .enabled_layer_names(&required_layers)
         .enabled_extension_names(&required_extension)
@@ -145,7 +145,7 @@ impl VKProc {
     }
 
     pub fn init_khr_validation(mut self) -> Self {
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR |
                     vk::DebugUtilsMessageSeverityFlagsEXT::WARNING |

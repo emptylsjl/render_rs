@@ -58,14 +58,14 @@ impl<'a> VKDevice<'a> {
 
     pub fn create_graphical_device(mut self, index: u32) -> Self {
 
-        let queue_info = vk::DeviceQueueCreateInfo::builder()
+        let queue_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(index)
             .queue_priorities(&[1.0]);
 
         let features = vk::PhysicalDeviceFeatures::default();
         let extensions = vec![khr::Swapchain::name().as_ptr()];
 
-        let device_create_info = vk::DeviceCreateInfo::builder()
+        let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(slice::from_ref(&queue_info))
             .enabled_extension_names(extensions.as_slice())
             .enabled_features(&features);

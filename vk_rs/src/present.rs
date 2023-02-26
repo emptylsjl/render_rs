@@ -68,7 +68,7 @@ impl<'a> VKWindow<'a> {
             })
             .unwrap();
 
-        let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(self.surface)
             .min_image_count(image_count)
             .image_color_space(format.color_space)
@@ -105,7 +105,7 @@ pub fn create_vk_surface(vkproc: &VKProc, window: &window::Window) -> VkResult<v
     match window.raw_window_handle() {
         RawWindowHandle::Win32(handle) => unsafe {
             let surface_fn = khr::Win32Surface::new(&vkproc.entry, &vkproc.instance);
-            let surface_desc = vk::Win32SurfaceCreateInfoKHR::builder()
+            let surface_desc = vk::Win32SurfaceCreateInfoKHR::default()
                 .hinstance(handle.hinstance)
                 .hwnd(handle.hwnd);
             surface_fn.create_win32_surface(&surface_desc, None)
