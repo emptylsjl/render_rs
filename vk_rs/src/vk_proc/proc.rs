@@ -155,7 +155,8 @@ impl VKProc {
             .message_type(
                 vk::DebugUtilsMessageTypeFlagsEXT::GENERAL |
                     vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION |
-                    vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+                    vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE |
+                    vk::DebugUtilsMessageTypeFlagsEXT::DEVICE_ADDRESS_BINDING,
             )
             .pfn_user_callback(Some(debug_callback));
 

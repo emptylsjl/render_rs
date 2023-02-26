@@ -651,8 +651,11 @@ fn main() {
                 device.device_wait_idle().expect("wait idle");
 
                 framebuffers.iter().for_each( |&frame| device.destroy_framebuffer(frame, None));
+                println!("buffer destroy");
                 image_views.iter().for_each(|&image| device.destroy_image_view(image, None));
+                println!("view destroy");
                 vkproc.swapchain.destroy_swapchain(swapchain, None);
+                println!("swapchain destroy");
 
                 surface_properties.update(&vkproc, &device_properties.physical_device, &surface);
                 framebuffers = create_frame_buffer(&device, &render_pass, &image_views, &surface_properties);
@@ -743,7 +746,8 @@ fn main() {
             //         _ => {}
             //     }
             // }
-            Event::MainEventsCleared => {
+            // Event
+            Event::RedrawEventsCleared => {
                 draw(index % 2);
                 index += 1;
                 // println!("233");
