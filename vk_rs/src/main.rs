@@ -32,8 +32,11 @@ use winit::platform::run_return::EventLoopExtRunReturn;
 mod define;
 mod vk_proc;
 mod present;
+mod device;
 
 use define::*;
+use present::SurfaceProperty;
+use vk_proc::proc::VKProc;
 
 
 fn chars(s: &[u8]) -> &CStr {
@@ -60,12 +63,20 @@ unsafe extern "system" fn debug_callback(
 }
 
 
+
 pub fn create_instance(entry: &Entry) -> Instance {
 
     let layer_props = entry.enumerate_instance_layer_properties()
         .expect("iter instance layers");
     let extension_props = entry.enumerate_instance_extension_properties(Some(chars(b"\0")))
         .expect("iter instance extension");
+
+    let a = extension_props.into_iter().map(|x| x.extension_name).collect::<Vec<_>>()[0];
+    let e0: Vec<u8> = a.iter().map_while(|&c| {
+        println!("{c}");
+        if c == 0 { None }
+        else { Some(c as u8) }
+    }).collect();
 
     let required_extension = vec![
         khr::Surface::name().as_ptr(),
@@ -117,7 +128,7 @@ fn debug_init(debug_utils: &ext::DebugUtils) -> VkResult<DebugUtilsMessengerEXT>
     }
 }
 
-struct VKPhysicalDeviceProperties {
+struct DeviceProperties {
     queues: Vec<vk::QueueFamilyProperties>,
     features: vk::PhysicalDeviceFeatures,
     properties: vk::PhysicalDeviceProperties,
@@ -125,13 +136,10 @@ struct VKPhysicalDeviceProperties {
     layers_properties: Vec<vk::LayerProperties>,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     extensions_properties: Vec<vk::ExtensionProperties>,
-    surface_present: Vec<vk::PresentModeKHR>,
-    surface_formats: Vec<vk::SurfaceFormatKHR>,
-    surface_capabilities: vk::SurfaceCapabilitiesKHR,
     graphic_index: u32
 }
 
-fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_proc: &khr::Surface) -> Option<VKPhysicalDeviceProperties> {
+fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_proc: &khr::Surface) -> Option<DeviceProperties> {
     unsafe {
         instance.enumerate_physical_devices().unwrap()
             .into_iter()
@@ -142,7 +150,7 @@ fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_proc:
                         surface_proc.get_physical_device_surface_support(physical_device, *i as u32, *surface).unwrap() &&
                         queue.queue_flags.contains(vk::QueueFlags::GRAPHICS)
                     }).unwrap().0 as u32;
-                VKPhysicalDeviceProperties {
+                DeviceProperties {
                     queues,
                     graphic_index,
                     physical_device,
@@ -151,9 +159,6 @@ fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_proc:
                     memory_properties: instance.get_physical_device_memory_properties(physical_device),
                     layers_properties: instance.enumerate_device_layer_properties(physical_device).unwrap(),
                     extensions_properties: instance.enumerate_device_extension_properties(physical_device).unwrap(),
-                    surface_formats: surface_proc.get_physical_device_surface_formats(physical_device, *surface).unwrap(),
-                    surface_present: surface_proc.get_physical_device_surface_present_modes(physical_device, *surface).unwrap(),
-                    surface_capabilities: surface_proc.get_physical_device_surface_capabilities(physical_device, *surface).unwrap()
                 }
             })
             .max_by_key(|device| match device.properties.device_type {
@@ -170,11 +175,10 @@ fn enumerate_device(instance: &Instance, surface: &vk::SurfaceKHR, surface_proc:
 
 fn create_device(
     instance: &Instance,
-    device_properties: &VKPhysicalDeviceProperties,
+    device_properties: &DeviceProperties,
     extensions: &Vec<*const c_char>,
     features: &vk::PhysicalDeviceFeatures
 ) -> (Device, vk::Queue) {
-    assert!(device_properties.surface_capabilities.min_image_count > 0, "surface incapable of image displacement");
     // assert!()
     let queue_info = vk::DeviceQueueCreateInfo::default()
         .queue_family_index(device_properties.graphic_index)
@@ -218,10 +222,10 @@ fn create_vk_surface<Handle: HasRawWindowHandle + HasRawDisplayHandle>(
 fn create_swapchain(
     swapchain_proc : &khr::Swapchain,
     surface: &vk::SurfaceKHR,
-    device_properties: &VKPhysicalDeviceProperties
+    surface_properties: &SurfaceProperty
 ) -> vk::SwapchainKHR {
 
-    let present = device_properties.surface_present
+    let present = surface_properties.presents
         .iter()
         .max_by_key(|x| match **x {
             vk::PresentModeKHR::MAILBOX => 2,
@@ -230,10 +234,10 @@ fn create_swapchain(
         })
         .unwrap();
 
-    let extent = device_properties.surface_capabilities.current_extent;
-    let format = device_properties.surface_formats[0];
-    let image_count = device_properties.surface_capabilities.min_image_count+1;
-    let transform = device_properties.surface_capabilities.current_transform;
+    let extent = surface_properties.capabilities.current_extent;
+    let format = surface_properties.formats[0];
+    let image_count = surface_properties.capabilities.min_image_count+1;
+    let transform = surface_properties.capabilities.current_transform;
 
     let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(*surface)
@@ -258,7 +262,7 @@ fn create_image_views(
     device: &Device,
     swapchain: &vk::SwapchainKHR,
     swapchain_proc : &khr::Swapchain,
-    device_properties: &VKPhysicalDeviceProperties
+    surface_properties: &SurfaceProperty
 ) -> (Vec<vk::Image>, Vec<vk::ImageView>) {
     let swapchain_image = unsafe { swapchain_proc.get_swapchain_images(*swapchain) }.expect("create swapchain image");
     let image_views = swapchain_image
@@ -266,7 +270,7 @@ fn create_image_views(
         .map(|&image| {
             let create_view_info = vk::ImageViewCreateInfo::default()
                 .view_type(vk::ImageViewType::TYPE_2D)
-                .format(device_properties.surface_formats[0].format)
+                .format(surface_properties.formats[0].format)
                 .components(vk::ComponentMapping {
                     r: vk::ComponentSwizzle::IDENTITY,
                     g: vk::ComponentSwizzle::IDENTITY,
@@ -331,9 +335,9 @@ fn create_pipeline_layout(device: &Device) -> vk::PipelineLayout {
     }
 }
 
-fn create_render_pass(device: &Device, device_properties: &VKPhysicalDeviceProperties) -> vk::RenderPass {
+fn create_render_pass(device: &Device, surface_properties: &SurfaceProperty) -> vk::RenderPass {
 
-    let swapchain_format = device_properties.surface_formats[0].format;
+    let swapchain_format = surface_properties.formats[0].format;
     let attachment_description = [
         vk::AttachmentDescription::default()
             .format(swapchain_format)
@@ -450,10 +454,8 @@ fn create_graphic_pipeline(
     ];
 
     unsafe {
-        (
-            device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info, None)
-                .expect("create graphics pipeline")
-        )
+        device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info, None)
+            .expect("create graphics pipeline")
     }
 }
 
@@ -461,10 +463,10 @@ fn create_frame_buffer(
     device: &Device,
     render_pass: &vk::RenderPass,
     image_views: &Vec<vk::ImageView>,
-    device_properties: &VKPhysicalDeviceProperties
+    surface_properties: &SurfaceProperty
 ) -> Vec<vk::Framebuffer> {
 
-    let swapchain_extent = device_properties.surface_capabilities.current_extent;
+    let swapchain_extent = surface_properties.capabilities.current_extent;
     image_views.iter().map(|&image_view| {
         let attachments = [image_view];
         let frame_buffer_create_info = vk::FramebufferCreateInfo::default()
@@ -506,7 +508,7 @@ fn record_command_buffer(
     framebuffers: &Vec<vk::Framebuffer>,
     command_buffer: &vk::CommandBuffer,
     graphic_pipeline: &vk::Pipeline,
-    device_properties: &VKPhysicalDeviceProperties
+    surface_properties: &SurfaceProperty
 ) {
     let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
         .flags(vk::CommandBufferUsageFlags::default());
@@ -517,13 +519,14 @@ fn record_command_buffer(
     let clear_values = [
         vk::ClearValue {color: vk::ClearColorValue {float32: [0.,0.,0.,0.]}}
     ];
+    let swapchain_extent = surface_properties.capabilities.current_extent;
+
     let render_pass_begin_info = vk::RenderPassBeginInfo::default()
         .render_pass(*render_pass)
         .framebuffer(framebuffers[*image_index as usize])
-        .render_area(device_properties.surface_capabilities.current_extent.into())
+        .render_area(swapchain_extent.into())
         .clear_values(&clear_values);
 
-    let swapchain_extent = device_properties.surface_capabilities.current_extent;
     let scissors = [
         vk::Rect2D::from(swapchain_extent)
     ];
@@ -562,17 +565,15 @@ fn record_command_buffer(
     }
 }
 
-fn iter_destory<T: Copy, F: Fn(T)>(objects: Vec<T>, f: F) {
-    objects.iter().for_each(|&x| f(x))
-}
-
 fn main() {
 
     let entry = Entry::linked();
-    let instance = create_instance(&entry);
+    let vkproc = VKProc::new(entry, true).init_khr_validation();
 
-    let debug_utils = ext::DebugUtils::new(&entry, &instance);
-    let debug_messenger = debug_init(&debug_utils).expect("create debug callback");
+    let entry = &vkproc.entry;
+    let instance = &vkproc.instance;
+    let surface_proc = &vkproc.surface;
+    // let b = ;
 
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -581,22 +582,22 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let surface_proc = khr::Surface::new(&entry, &instance);
-    let surface = create_vk_surface(&entry, &window, &instance).unwrap();
+    let surface = create_vk_surface(entry, &window, instance).unwrap();
 
-    let device_properties = enumerate_device(&instance, &surface, &surface_proc).expect("find device");
+    let device_properties = enumerate_device(instance, &surface, surface_proc).expect("find device");
+
+    let mut surface_properties = SurfaceProperty::new(&vkproc, &device_properties.physical_device, &surface);
 
     let features = vk::PhysicalDeviceFeatures::default();
     let extensions = vec![khr::Swapchain::name().as_ptr()];
-    let (device, queue) = create_device(&instance, &device_properties, &extensions, &features);
+    let (device, queue) = create_device(instance, &device_properties, &extensions, &features);
 
-    let swapchain_proc = khr::Swapchain::new(&instance, &device);
-    let swapchain = create_swapchain(&swapchain_proc, &surface, &device_properties);
+    let swapchain_proc = khr::Swapchain::new(instance, &device);
+    let swapchain = create_swapchain(&swapchain_proc, &surface, &surface_properties);
 
-    let (swapchain_image, image_views) = create_image_views(&device, &swapchain, &swapchain_proc, &device_properties);
+    let (mut swapchain_image, mut image_views) = create_image_views(&device, &swapchain, &swapchain_proc, &surface_properties);
 
-    let render_pass = create_render_pass(&device, &device_properties);
-
+    let render_pass = create_render_pass(&device, &surface_properties);
 
     let frag_create_info = create_shader_module(&device, include_bytes!("shader/frag.spv"), vk::ShaderStageFlags::FRAGMENT);
     let vert_create_info = create_shader_module(&device, include_bytes!("shader/vert.spv"), vk::ShaderStageFlags::VERTEX);
@@ -607,7 +608,7 @@ fn main() {
     let pipeline_layout = create_pipeline_layout(&device);
     let graphic_pipelines = create_graphic_pipeline(&device, &render_pass, &pipeline_layout, &shader_create_infos);
 
-    let framebuffers = create_frame_buffer(&device, &render_pass, &image_views, &device_properties);
+    let mut framebuffers = create_frame_buffer(&device, &render_pass, &image_views, &surface_properties);
 
     let command_pool = create_command_pool(&device, device_properties.graphic_index);
     let command_buffers = command_buffer_allocate(&device, &command_pool);
@@ -639,15 +640,26 @@ fn main() {
 
     let mut index: usize = 0;
 
-    let draw = |frame_index| {
+    let mut draw = |frame_index| {
         unsafe {
             device.wait_for_fences(&[draw_end_fences[frame_index]], true, u64::MAX).expect("Wait for fence failed.");
-            device.reset_fences(&[draw_end_fences[frame_index]]).expect("Reset fences failed.");
             let (image_index, suboptimal) = swapchain_proc
                 .acquire_next_image(swapchain, u64::MAX, image_available_semaphores[frame_index], vk::Fence::null())
                 .expect("acquire image");
+            if !suboptimal {
+
+                image_views.iter().for_each(|&image| device.destroy_image_view(image, None));
+                framebuffers.iter().for_each( |&frame| device.destroy_framebuffer(frame, None));
+                vkproc.swapchain.destroy_swapchain(swapchain, None);
+
+                surface_properties.update(&vkproc, &device_properties.physical_device, &surface);
+                framebuffers = create_frame_buffer(&device, &render_pass, &image_views, &surface_properties);
+                (swapchain_image, image_views) = create_image_views(&device, &swapchain, &swapchain_proc, &surface_properties);
+                return;
+            }
+
+            device.reset_fences(&[draw_end_fences[frame_index]]).expect("Reset fences failed.");
             let capabilities = surface_proc.get_physical_device_surface_capabilities(device_properties.physical_device, surface).unwrap();
-            print!("{suboptimal} - {frame_index} - {:?}\n", capabilities.current_extent);
 
             let command_buffer = command_buffers[frame_index];
             let graphic_pipeline = graphic_pipelines[0];
@@ -662,7 +674,7 @@ fn main() {
                 &framebuffers,
                 &command_buffer,
                 &graphic_pipeline,
-                &device_properties
+                &surface_properties
             );
 
             let wait_semaphores = [image_available_semaphores[frame_index]];
@@ -756,8 +768,6 @@ fn main() {
         device.destroy_render_pass(render_pass, None);
         device.destroy_command_pool(command_pool, None);
         device.destroy_device(None);
-        debug_utils.destroy_debug_utils_messenger(debug_messenger, None);
-        instance.destroy_instance(None);
 
     }
 }
