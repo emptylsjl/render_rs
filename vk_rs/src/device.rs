@@ -7,7 +7,7 @@ use std::mem::MaybeUninit;
 use ash::{*, prelude::VkResult};
 use ash::extensions::{khr, ext};
 use smallvec::{smallvec, SmallVec};
-use crate::vk_proc::{char2s, VKProc};
+use crate::vk_proc::proc::{char2s, VKProc};
 
 
 pub struct VKDevice<'a> {
@@ -58,14 +58,14 @@ impl<'a> VKDevice<'a> {
 
     pub fn create_graphical_device(mut self, index: u32) -> Self {
 
-        let queue_info = vk::DeviceQueueCreateInfo::default()
+        let queue_info = vk::DeviceQueueCreateInfo::builder()
             .queue_family_index(index)
             .queue_priorities(&[1.0]);
 
         let features = vk::PhysicalDeviceFeatures::default();
         let extensions = vec![khr::Swapchain::name().as_ptr()];
 
-        let device_create_info = vk::DeviceCreateInfo::default()
+        let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(slice::from_ref(&queue_info))
             .enabled_extension_names(extensions.as_slice())
             .enabled_features(&features);
@@ -110,7 +110,7 @@ pub fn enumerate_device(vkproc: &VKProc) -> impl Iterator<Item=VKDevice> {
                 VKDevice {
                     vkproc,
                     physical_device,
-                    device: ,
+                    device: mem::zeroed(),
                     graphic_queue: mem::zeroed(),
                     features: vkproc.instance.get_physical_device_features(physical_device),
                     properties: vkproc.instance.get_physical_device_properties(physical_device),

@@ -105,14 +105,14 @@ fn instance_create(entry: &Entry) -> Instance {
     ];
 
 
-    let app_info = vk::ApplicationInfo::default()
+    let app_info = vk::ApplicationInfo::builder()
         .application_name(app_name)
         .application_version(0)
         .engine_name(app_name)
         .engine_version(0)
         .api_version(vk::make_api_version(0, 1, 0, 0));
 
-    let instance_info = vk::InstanceCreateInfo::default()
+    let instance_info = vk::InstanceCreateInfo::builder()
         .application_info(&app_info)
         .enabled_layer_names(&required_layers)
         .enabled_extension_names(&required_extension)
@@ -123,7 +123,7 @@ fn instance_create(entry: &Entry) -> Instance {
 
 impl VKProc {
     pub fn new(entry: Entry, debug: bool) -> Self {
-        let instance = create_instance(&entry);
+        let instance = instance_create(&entry);
         let surface = khr::Surface::new(&entry, &instance);
         unsafe {
             // Self {
@@ -135,7 +135,7 @@ impl VKProc {
             // }
             Self {
                 swapchain: mem::uninitialized(),
-                debug_util: mem::zeroed(),
+                debug_util: mem::uninitialized(),
                 debug_msg: mem::zeroed(),
                 surface,
                 instance,
@@ -145,7 +145,7 @@ impl VKProc {
     }
 
     pub fn init_khr_validation(mut self) -> Self {
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
+        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR |
                     vk::DebugUtilsMessageSeverityFlagsEXT::WARNING |

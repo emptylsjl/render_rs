@@ -23,7 +23,7 @@ use smallvec::{smallvec, SmallVec};
 use winit::event::VirtualKeyCode::N;
 use winit::platform::run_return::EventLoopExtRunReturn;
 use crate::device::VKDevice;
-use crate::vk_proc::VKProc;
+use crate::vk_proc::proc::VKProc;
 
 pub struct VKWindow<'a> {
     vkproc: &'a VKProc,
@@ -68,7 +68,7 @@ impl<'a> VKWindow<'a> {
             })
             .unwrap();
 
-        let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
+        let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(self.surface)
             .min_image_count(image_count)
             .image_color_space(format.color_space)
@@ -105,7 +105,7 @@ pub fn create_vk_surface(vkproc: &VKProc, window: &window::Window) -> VkResult<v
     match window.raw_window_handle() {
         RawWindowHandle::Win32(handle) => unsafe {
             let surface_fn = khr::Win32Surface::new(&vkproc.entry, &vkproc.instance);
-            let surface_desc = vk::Win32SurfaceCreateInfoKHR::default()
+            let surface_desc = vk::Win32SurfaceCreateInfoKHR::builder()
                 .hinstance(handle.hinstance)
                 .hwnd(handle.hwnd);
             surface_fn.create_win32_surface(&surface_desc, None)
@@ -124,13 +124,11 @@ pub struct SurfaceProperty {
 impl SurfaceProperty {
     pub fn new(vkproc: &VKProc, physical_device: &vk::PhysicalDevice, surface: &vk::SurfaceKHR) -> Self {
         unsafe {
-            let mut prop = Self  {
-                capabilities: mem::zeroed(),
-                presents: mem::zeroed(),
-                formats: mem::zeroed(),
-            };
-            prop.update(vkproc, physical_device, surface);
-            prop
+            Self  {
+                formats: vkproc.surface.get_physical_device_surface_formats(*physical_device, *surface).unwrap(),
+                presents: vkproc.surface.get_physical_device_surface_present_modes(*physical_device, *surface).unwrap(),
+                capabilities: vkproc.surface.get_physical_device_surface_capabilities(*physical_device, *surface).unwrap(),
+            }
         }
     }
 
