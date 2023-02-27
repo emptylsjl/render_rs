@@ -9,8 +9,12 @@ use ash::extensions::{khr, ext};
 use once_cell::unsync::OnceCell;
 
 pub struct VKProc {
+    // instance_hd: vk::Instance,
+    // fp_instance: vk::,
+    fp_debug_utils: vk::ExtDebugUtilsFn,
+    fp_surface_khr: vk::KhrSurfaceFn,
     debug_msg: vk::DebugUtilsMessengerEXT,
-    pub swapchain: khr::Swapchain,
+    // pub swapchain: khr::Swapchain,
     pub surface: khr::Surface,
     pub debug_util: ext::DebugUtils,
     pub instance: Instance,
@@ -122,9 +126,19 @@ fn instance_create(entry: &Entry) -> Instance {
 }
 
 impl VKProc {
-    pub fn new(entry: Entry, debug: bool) -> Self {
+    pub fn new(debug: bool) -> Self {
+        let entry = Entry::linked();
         let instance = instance_create(&entry);
+        let instance_hd = instance.handle();
+        let debug_util = ext::DebugUtils::new(&entry, &instance);
         let surface = khr::Surface::new(&entry, &instance);
+
+        let fp_surface_khr = vk::KhrSurfaceFn::load(|name| unsafe {
+            mem::transmute(entry.get_instance_proc_addr(instance_hd, name.as_ptr()))
+        });
+        let fp_debug_utils = vk::ExtDebugUtilsFn::load(|name| unsafe {
+            mem::transmute(entry.get_instance_proc_addr(instance_hd, name.as_ptr()))
+        });
         unsafe {
             // Self {
             //     swapchain: OnceCell::new(),
@@ -134,9 +148,10 @@ impl VKProc {
             //     entry,
             // }
             Self {
-                swapchain: mem::uninitialized(),
-                debug_util: mem::uninitialized(),
                 debug_msg: mem::zeroed(),
+                fp_debug_utils,
+                fp_surface_khr,
+                debug_util,
                 surface,
                 instance,
                 entry,
@@ -161,22 +176,19 @@ impl VKProc {
             .pfn_user_callback(Some(debug_callback));
 
         unsafe {
-            self.debug_util = ext::DebugUtils::new(&self.entry, &self.instance);
             self.debug_msg = self.debug_util.create_debug_utils_messenger(&debug_info, None).expect("add debug callback");
             self
         }
     }
-
-    pub fn init_swapchain_proc(&mut self, device: &Device) {
-        self.swapchain = khr::Swapchain::new(&self.instance, &device);
-    }
-
 }
 
 impl Drop for VKProc {
     fn drop(&mut self) {
         unsafe {
+
+            println!("4");
             self.debug_util.destroy_debug_utils_messenger(self.debug_msg, None);
+            println!("5");
             self.instance.destroy_instance(None);
         }
     }
