@@ -45,12 +45,24 @@ message("VULKAN_LIBRARY where " ${VULKAN_LIBRARY})
 message("VULKAN_INCLUDE_DIR where " ${VULKAN_INCLUDE_DIR})
 
 add_executable (tri
-        main.cpp;
+        sample/tri/tri.cpp;
         #        vk_cpp/device.cpp
         #        vk_cpp/main.h
         )
 
 target_link_libraries (tri
+        glfw;
+        Vulkan::Vulkan
+        )
+
+add_executable (texture
+        sample/texture/texture.cpp;
+        sample/texture/stb_image.h;
+        #        vk_cpp/device.cpp
+        #        vk_cpp/main.h
+        )
+
+target_link_libraries (texture
         glfw;
         Vulkan::Vulkan
         )

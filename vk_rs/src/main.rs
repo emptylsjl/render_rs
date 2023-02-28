@@ -399,62 +399,77 @@ fn main() {
 
 
         match event {
-            Event::RedrawEventsCleared => unsafe {
-                if !exit {
-                    let frame_index = index % 2;
-                    device.wait_for_fences(&[draw_end_fences[frame_index]], true, u64::MAX).expect("Wait for fence failed.");
-                    let (image_index, suboptimal) = vkpresent.proc
-                        .acquire_next_image(vkpresent.swapchain, u64::MAX, image_available_semaphores[frame_index], vk::Fence::null())
-                        .expect("acquire image");
-                    if recreate || suboptimal {
-                        println!("233 --");
+            Event::MainEventsCleared => {
+                vkpresent.window.window.request_redraw();
+            },
+            Event::RedrawEventsCleared => 'draw: {
+                unsafe {
+                    if !exit {
+                        let frame_index = index % 2;
+                        device.wait_for_fences(&[draw_end_fences[frame_index]], true, u64::MAX).expect("Wait for fence failed.");
+                        let image_index = match vkpresent.proc.acquire_next_image(
+                            vkpresent.swapchain,
+                            u64::MAX,
+                            image_available_semaphores[frame_index],
+                            vk::Fence::null()
+                        ) {
+                            Ok((index, suboptimal)) => {
+                                recreate = suboptimal;
+                                index
+                            }
+                            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                                vkpresent.recreate_swapchain(&render_pass);
+                                break 'draw
+                            }
+                            Err(a) => { panic!("miao: {a:?}") }
+                        };
+
+                        device.reset_fences(&[draw_end_fences[frame_index]]).expect("Reset fences failed.");
+                        let command_buffer = command_buffers[frame_index];
+                        let graphic_pipeline = graphic_pipelines[0];
+                        device.reset_command_buffer(
+                            command_buffer,
+                            vk::CommandBufferResetFlags::default(),
+                        ).expect("Reset command buffer");
+                        record_command_buffer(
+                            &vkdevice,
+                            &vkpresent,
+                            &image_index,
+                            &render_pass,
+                            &command_buffer,
+                            &graphic_pipeline,
+                        );
+
+                        let wait_semaphores = [image_available_semaphores[frame_index]];
+                        let signal_semaphores = [draw_end_semaphores[frame_index]];
+                        let command_bufferss = [command_buffer];
+                        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+                        let submit_info = vk::SubmitInfo::default()
+                            .wait_semaphores(&wait_semaphores)
+                            .wait_dst_stage_mask(&wait_stages)
+                            .command_buffers(&command_bufferss)
+                            .signal_semaphores(&signal_semaphores);
+                        device.queue_submit(queue, &[submit_info], draw_end_fences[frame_index]).expect("queue submit");
+
+                        let swapchains = [vkpresent.swapchain];
+                        let image_indexes = [image_index];
+                        let present_info = vk::PresentInfoKHR::default()
+                            .wait_semaphores(&signal_semaphores) // &base.rendering_complete_semaphore)
+                            .swapchains(&swapchains)
+                            .image_indices(&image_indexes);
+
+                        match vkpresent.proc.queue_present(queue, &present_info) {
+                            Ok(false) => {}
+                            Ok(true) => { recreate = true }
+                            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { recreate = true }
+                            Err(a) => { print!("miao miao miao\n{a:?}"); }
+                        };
+                        index += 1;
+                    }
+                    if recreate {
                         vkpresent.recreate_swapchain(&render_pass);
                         recreate = false;
-                        return;
                     }
-
-                    device.reset_fences(&[draw_end_fences[frame_index]]).expect("Reset fences failed.");
-                    let command_buffer = command_buffers[frame_index];
-                    let graphic_pipeline = graphic_pipelines[0];
-                    device.reset_command_buffer(
-                        command_buffer,
-                        vk::CommandBufferResetFlags::default(),
-                    ).expect("Reset command buffer");
-                    record_command_buffer(
-                        &vkdevice,
-                        &vkpresent,
-                        &image_index,
-                        &render_pass,
-                        &command_buffer,
-                        &graphic_pipeline,
-                    );
-
-                    let wait_semaphores = [image_available_semaphores[frame_index]];
-                    let signal_semaphores = [draw_end_semaphores[frame_index]];
-                    let command_bufferss = [command_buffer];
-                    let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-                    let submit_info = vk::SubmitInfo::default()
-                        .wait_semaphores(&wait_semaphores)
-                        .wait_dst_stage_mask(&wait_stages)
-                        .command_buffers(&command_bufferss)
-                        .signal_semaphores(&signal_semaphores);
-                    device.queue_submit(queue, &[submit_info], draw_end_fences[frame_index]).expect("queue submit");
-
-                    let swapchains = [vkpresent.swapchain];
-                    let image_indexes = [image_index];
-                    let present_info = vk::PresentInfoKHR::default()
-                        .wait_semaphores(&signal_semaphores) // &base.rendering_complete_semaphore)
-                        .swapchains(&swapchains)
-                        .image_indices(&image_indexes);
-
-                    match vkpresent.proc.queue_present(queue, &present_info) {
-                        Ok(false) => {}
-                        Ok(true) => { recreate = true }
-                        Err(a) => { print!("miao miao miao\n{a:?}");}
-                    } ;
-
-                    device.device_wait_idle().expect("wait idle");
-                    index += 1;
                 }
             }
 
@@ -475,6 +490,7 @@ fn main() {
                 match event {
                     WE::Resized(a) => unsafe {
                         // println!("{a:?}");
+                        // vkpresent.recreate_swapchain(&render_pass)
                     }
                     // WE::KeyboardInput { input, is_synthetic, .. } => {
                     //     println!("{input:?}, {is_synthetic:?}")

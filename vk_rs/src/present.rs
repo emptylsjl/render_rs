@@ -156,7 +156,7 @@ pub fn create_swapchain(
     let format = window.prop.formats[1];
     let image_count = window.prop.capabilities.min_image_count+1;
     let transform = window.prop.capabilities.current_transform;
-    println!("{transform:?}");
+
     let present = window.prop.presents
         .iter()
         .max_by_key(|&&x| match x {
@@ -308,6 +308,15 @@ impl<'a> VKPresent<'a> {
     pub fn recreate_swapchain(&mut self, render_pass: &RenderPass) {
         self.destroy();
         self.window.update_prop(self.device.physical_device());
+        self.update_swapchain();
+        self.update_image_views();
+        self.update_framebuffer(render_pass);
+    }
+
+    pub fn recreate_swapchain_from_physical_size(&mut self, render_pass: &RenderPass) {
+        self.destroy();
+        let size = self.window.get_dim_window();
+        let extent = Extent2D::default()
         self.update_swapchain();
         self.update_image_views();
         self.update_framebuffer(render_pass);

@@ -59,23 +59,19 @@ fn main() {
     // let mut a1 = A {a0: b, a1: 6 };
     // a1.a0 = B {b0: "4".to_string()};
     // a0.a0 = B {b0: "5".to_string()};
-    println!("---");
-
-    let entry = unsafe { Entry::load().expect("miao") };
-    let app_info = vk::ApplicationInfo {
-        api_version: vk::make_api_version(0, 1, 0, 0),
-        ..Default::default()
-    };
-    let create_info = vk::InstanceCreateInfo {
-        p_application_info: &app_info,
-        ..Default::default()
-    };
-    // vk::InstanceCreateInfo
-    let instance = unsafe { entry.create_instance(&create_info, None).expect("miao") };
 
     // let a = [Some((233, "abc")), None];
-    // let b = a[0].map(|x| x.0);
-    // let c = a[1].map(|x| x.0);
-    // println!("{b:?}");
-    // println!("{c:?}");
+    let a = [Ok((233, "abc")), Err(233)];
+    let b = a[0].map(|x| { println!("1"); x.0});
+    let c = a[1].map(|x| { println!("2"); x.0});
+    let d = a[0].map_or(0, |x| { println!("3"); x.0});
+    let e = a[1].map_or(0, |x| { println!("4"); x.0});
+    let f = a[0].map_err(|x| { println!("5"); 244});
+    let g = a[1].map_err(|x| { println!("6"); 244});
+    println!("- {b:?}");
+    println!("- {c:?}");
+    println!(" -{d:?}");
+    println!(" -{e:?}");
+    println!("- {f:?}");
+    println!("- {g:?}");
 }
