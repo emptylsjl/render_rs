@@ -7,32 +7,51 @@
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#include "weekend.h"
 
 #include <Eigen/Dense>
 using namespace Eigen;
 
 using v2d = Vector2d;
-using v3d = Vector3d;
+//using v3d = Vector3d;
 using v4d = Vector4d;
 using rgbV3d = Vector3d;
 using rgbV4d = Vector4d;
 
+using v3d = vec3;
+
+
+const double infinity = std::numeric_limits<double>::infinity();
+const double pi = 3.1415926535897932385;
+const auto aspect_ratio = 16.0 / 9.0;
+int count0 = 0;
+int count1 = 0;
+int count2 = 0;
+
 class ray {
-public:
-    ray(v3d  origin, v3d  direction) : pt(std::move(origin)), dir(std::move(direction)){}
+    public:
+        ray() = default;
+        ray(v3d origin, v3d dir) : pt(std::move(origin)), dir(std::move(dir)) {
+    //        printf("b- %f %f %f\n", dir.x(), dir.y(), dir.z() );
+        }
 
-    v3d at(double t) const {return pt + t * dir;}
+        v3d at(double t) const {return pt + t * dir;}
 
-public:
-    v3d pt;
-    v3d dir;
+    public:
+        v3d pt;
+        v3d dir;
 };
+
+uint8_t d2u8(double c) {
+    return uint8_t(std::clamp(c, 0., 1.) * 255);
+}
 
 class rgba {
 public:
     rgba() : c{0, 0, 0, 0} {}
     rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a) : c{r, g, b, a} {}
-    rgba(v3d c) : c{uint8_t(c[0] * 255), uint8_t(c[1] * 255), uint8_t(c[2] * 255), 255 } {}
+    rgba(v3d c) : c{d2u8(c[0]), d2u8(c[1]), d2u8(c[2]), 255 } {}
+//    rgba(v3d c) : c{uint8_t(c[0] * 255), uint8_t(c[1] * 255), uint8_t(c[2] * 255), 255 } {}
     rgba(v4d c) : c{uint8_t(c[0] * 255), uint8_t(c[1] * 255), uint8_t(c[2] * 255), uint8_t(c[3] * 255) } {}
 
     uint8_t r() { return c[3]; }
@@ -44,15 +63,6 @@ public:
 
 public:
     uint8_t c[4];
-};
-
-class sphere {
-public:
-    sphere() {}
-    sphere(v3d cpt, double r) : cpt(std::move(cpt)), r(r) {};
-public:
-    v3d cpt;
-    double r;
 };
 
 struct spt {
@@ -71,8 +81,80 @@ struct hit_record {
     v3d p;
 };
 
-const auto aspect_ratio = 16.0 / 8.0;
-const int W = 800;
+class sphere {
+    public:
+        sphere() {}
+        sphere(v3d cpt, double r) : cpt(std::move(cpt)), r(r) {};
+    public:
+        v3d cpt;
+        double r;
+};
+
+class world {
+    public:
+        world() {}
+        world(sphere* s, int len) { objs.insert(objs.begin(), s, s+len); }
+
+        void add(sphere s) { objs.push_back(s); }
+        void clean() { objs.clear(); }
+        uint32_t len() { return objs.size(); }
+
+        hitSpt onHit(const ray& r) {
+
+            double mode = 0;
+
+            for (const auto& s : objs) {
+                v3d ps = r.pt - s.cpt;
+                double a = dot(r.dir, r.dir);
+                double b = dot(r.dir, ps) *(mode+1) ;
+                double c = dot(ps, ps) - s.r*s.r;
+                double d = b*b-a*c*(1+mode*3);
+                if (d > 0) {
+    //                double t0 = (-b-sqrt(d))/(mode+1)*a;
+    //                double t1 = (-b+sqrt(d))/(mode+1)*a;
+                    double t0 = (-b-sqrt(d))/a;
+                    double t1 = (-b+sqrt(d))/a;
+                    if (t0 > 0 && t1 > 0) {
+                        spt a0 = {r.at(t0), (r.at(t0)-s.cpt)/s.r, t0};
+                        spt a1 = {r.at(t1), (r.at(t1)-s.cpt)/s.r, t1};
+                        return { {a0, a1}, a0.t>a1.t, (a1.t!=a0.t)+1 };
+                    }
+                }
+            }
+            return { {}, {}, 0};
+        }
+
+    public:
+        std::vector<sphere> objs;
+};
+
+class camera {
+    public:
+        camera() {
+            auto viewport_height = 2.0;
+            auto viewport_width = aspect_ratio * viewport_height;
+            auto focal_length = 1.0;
+
+            origin = point3(0, 0, 0);
+            horizontal = vec3(viewport_width, 0.0, 0.0);
+            vertical = vec3(0.0, viewport_height, 0.0);
+            lower_left_corner = origin - horizontal/2 - vertical/2 - vec3(0, 0, focal_length);
+        }
+
+        ray get_ray(double u, double v) const {
+            return ray(origin, lower_left_corner + u*horizontal + v*vertical - origin);
+        }
+
+    private:
+        point3 origin;
+        point3 lower_left_corner;
+        vec3 horizontal;
+        vec3 vertical;
+
+};
+
+//const int W = 800;
+const int W = 40;
 const int H = W/aspect_ratio;
 
 void write_to_img(uint8_t *img, int x, int y, rgba color) {
@@ -80,47 +162,21 @@ void write_to_img(uint8_t *img, int x, int y, rgba color) {
     *(uint32_t*)(img+pos) = color.rgba_u32();
 }
 
-hitSpt on_hit(const v3d& sphere, double sphere_r, const ray& r) {
-    v3d ps = r.pt - sphere;
-    auto a = r.dir.dot(r.dir);
-    auto b = r.dir.dot(ps) * 2;
-    auto c = ps.dot(ps) - sphere_r*sphere_r;
-    double d = b*b-4*a*c;
-    if (d < 0) return { {}, {}, 0};
-    auto t0 = (-b-sqrt(d))/2*a;
-    auto t1 = (-b+sqrt(d))/2*a;
-    spt a0 = {r.at(t0), (r.at(t0)-sphere)/sphere_r, t0};
-    spt a1 = {r.at(t1), (r.at(t1)-sphere)/sphere_r, t1};
-    return { {a0, a1}, a1.t < a0.t, (a1.t != a0.t) + 1 };
-}
-
-hitSpt on_hit2(const v3d& sphere, double sphere_r, const ray& r) {
-    v3d ps = r.pt - sphere;
-    auto a = r.dir.dot(r.dir);
-    auto b = r.dir.dot(ps);
-    auto c = ps.dot(ps) - sphere_r*sphere_r;
-    double d = b*b-a*c;
-    if (d < 0) return { {}, {}, 0};
-    auto t0 = (-b-sqrt(d))/a;
-    auto t1 = (-b+sqrt(d))/a;
-    spt a0 = {r.at(t0), (r.at(t0)-sphere)/sphere_r, t0};
-    spt a1 = {r.at(t1), (r.at(t1)-sphere)/sphere_r, t1};
-    return { {a0, a1}, a1.t > a0.t, (a1.t != a0.t) + 1 };
-}
-
-rgbV3d ray_color(const ray& r) {
-    hitSpt hpts = on_hit2(v3d(0, 0, -1), 0.6, r);
-    if (hpts.count > 0) {
-        v3d N = (r.at(hpts.pts[0].t) - v3d(0, 0, -1)).normalized();
-        return 0.5*v3d(N.x()+1, N.y()+1, N.z()+1);
+v3d ray_color(world& w, ray& r) {
+    auto [pts, min, count] = w.onHit(r);
+    if (count > 0) {
+//        return ((r.at(pts[min].t) - v3d(0, 0, -1)).normalized() + v3d(1, 1, 1)) * 0.5;
+        return (pts[min].n + v3d(1, 1, 1)) * 0.5;
     }
-    auto t = 0.5*(r.dir.normalized().y() + 1.0);
-    return (1.0-t)*rgbV3d(1.0, 1.0, 1.0) + t*rgbV3d(0.5, 0.7, 1.0);
+    auto t = 0.5*(normalized(r.dir).y() + 1.0);
+    return (1.0-t)*v3d(1.0, 1.0, 1.0) + t*v3d(0.5, 0.7, 1.0);
 }
 
-void drawA() {
+
+int main() {
     const std::string filename("D:\\cur\\render_rs\\raytrace_cpp\\img\\raytrace.png");
     auto *image = (uint8_t*)calloc(H * W * 4, sizeof(uint8_t));
+    setbuf(stdout, 0);
 
     auto viewport_height = 2.0;
     auto viewport_width = aspect_ratio * viewport_height;
@@ -130,26 +186,23 @@ void drawA() {
     auto vertical = v3d(0, viewport_height, 0);
     auto lower_left_corner = origin - horizontal/2 - vertical/2 - v3d(0, 0, focal_length);
 
+    sphere aa[2] = {
+        sphere(v3d(0, 0, -1), 0.5),
+        sphere(v3d(0,-100.5,-1), 100),
+    };
+    world w;
+    w.add(aa[0]);
+    w.add(aa[1]);
+
     for (int i = 0, ii = W-1; i < W; ++i, --ii) {
         for (int j = 0, jj = H-1; j < H; ++j, --jj) {
-//            printf("%d ", jj);
             auto u = double(i) / W;
             auto v = double(j) / H;
             ray r(origin, lower_left_corner + u*horizontal + v*vertical);
-            v3d color = ray_color(r);
-            write_to_img(image, i, jj, rgba(color));
-
+            v3d c = ray_color(w, r);
+            write_to_img(image, i, jj, rgba(c));
         }
     }
-//    std::cout << image << std::endl;
     stbi_write_png(filename.c_str(), W, H, 4, image, W*4);
     printf("\n\n233\n");
-
-
-}
-
-
-int main() {
-    drawA();
-    return 0;
 }
