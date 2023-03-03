@@ -62,9 +62,13 @@ class vec3 {
             return sqrt(length_squared());
         }
 
-        double length_squared() const {
-            return e[0]*e[0] + e[1]*e[1] + e[2]*e[2];
-        }
+    double length_squared() const {
+        return e[0]*e[0] + e[1]*e[1] + e[2]*e[2];
+    }
+
+    double sum() const {
+        return e[0] + e[1] + e[2];
+    }
 
         bool near_zero() const {
             // Return true if the vector is close to zero in all dimensions.
@@ -86,7 +90,7 @@ class vec3 {
 
 
 // Type aliases for vec3
-using point3 = vec3;   // 3D point
+using p3d = vec3;   // 3D point
 using color = vec3;    // RGB color
 
 
@@ -154,6 +158,16 @@ inline vec3 random_in_unit_sphere() {
 
 inline vec3 random_unit_vector() {
     return normalized(random_in_unit_sphere());
+//    vec3 a = vec3::random(-1, 1);
+//    return a/a.sum();
+}
+
+inline vec3 random_unit_vector(vec3& normal) {
+    vec3 in_unit_sphere = random_in_unit_sphere();
+    if (dot(in_unit_sphere, normal) > 0.0) // In the same hemisphere as the normal
+        return in_unit_sphere;
+    else
+        return -in_unit_sphere;
 }
 
 inline vec3 random_in_hemisphere(const vec3& normal) {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.23)
-project(raytrace_cpp)
+project(raytrace_book_impl)
 set(CMAKE_CXX_STANDARD 17)
 
 include_directories(
@@ -16,4 +16,6 @@ add_executable(weekend
 add_executable(weekend_sample
         lib/stb/stb_image_write.h
         weekend_sample.cpp
+        weekend_sample0.h
+        weekend_sample1.h
         )

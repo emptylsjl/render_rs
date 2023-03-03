@@ -8,12 +8,38 @@
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#include "../book_sample/src/InOneWeekend/material.h"
+
+#include <chrono>
+using namespace std::chrono;
 
 
 const double infinity = std::numeric_limits<double>::infinity();
 const double pi = 3.1415926535897932385;
 const auto aspect_ratio = 16.0 / 9.0;
+const int W = 800;
+//const int W = 40;
+const int H = static_cast<int>(W / aspect_ratio);
+const double sample_count = 100;
+const int max_depth = 50;
 
+
+
+inline double random_double() {
+    // Returns a random real in [0,1).
+    return rand() / (RAND_MAX + 1.0);
+}
+
+inline double random_double(double min, double max) {
+    // Returns a random real in [min,max).
+    return min + (max-min)*random_double();
+}
+
+inline double clamp(double x, double min, double max) {
+    if (x < min) return min;
+    if (x > max) return max;
+    return x;
+}
 
 class vec3 {
 public:
@@ -52,6 +78,14 @@ public:
 
     double length_squared() const {
         return e[0]*e[0] + e[1]*e[1] + e[2]*e[2];
+    }
+
+    inline static vec3 random() {
+        return vec3(random_double(), random_double(), random_double());
+    }
+
+    inline static vec3 random(double min, double max) {
+        return vec3(random_double(min,max), random_double(min,max), random_double(min,max));
     }
 
 public:
@@ -102,33 +136,41 @@ inline vec3 unit_vector(vec3 v) {
     return v / v.length();
 }
 
-using point3 = vec3;   // 3D point
-using color = vec3;    // RGB color
+using pt3d = vec3;   // 3D point
 
 class ray {
 public:
     ray() {}
-    ray(const point3& origin, const vec3& direction)
+    ray(const pt3d& origin, const vec3& direction)
             : orig(origin), dir(direction)
     {}
 
-    point3 origin() const  { return orig; }
+    pt3d origin() const  { return orig; }
     vec3 direction() const { return dir; }
 
-    point3 at(double t) const {
+    pt3d at(double t) const {
         return orig + t*dir;
     }
 
 public:
-    point3 orig;
+    pt3d orig;
     vec3 dir;
 };
+
+double process(double c) {
+    return sqrt(c / sample_count);
+}
+
+uint8_t d2u8(double c) {
+    return uint8_t(clamp(process(c), 0., 1.) * 255);
+}
 
 class rgba {
 public:
     rgba() : c{0, 0, 0, 0} {}
     rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a) : c{r, g, b, a} {}
-    rgba(vec3 c) : c{uint8_t(c[0] * 255), uint8_t(c[1] * 255), uint8_t(c[2] * 255), 255 } {}
+    rgba(vec3 c) : c{d2u8(c[0]), d2u8(c[1]), d2u8(c[2]), 255 } {}
+//    rgba(vec3 c) : c{uint8_t(c[0] * 255), uint8_t(c[1] * 255), uint8_t(c[2] * 255), 255 } {}
 
     uint8_t r() { return c[3]; }
     uint8_t g() { return c[2]; }
@@ -141,12 +183,12 @@ public:
     uint8_t c[4];
 };
 
-
 struct hit_record {
-    point3 p;
+    pt3d p;
     vec3 normal;
     double t;
     bool front_face;
+    std::shared_ptr<material> mat_ptr;
 
     inline void set_face_normal(const ray& r, const vec3& outward_normal) {
         front_face = dot(r.direction(), outward_normal) < 0;
@@ -162,14 +204,17 @@ class hittable {
 class sphere : public hittable {
 public:
     sphere() {}
-    sphere(point3 cen, double r) : center(cen), radius(r) {};
+    sphere(pt3d cen, double r) : center(cen), radius(r) {};
+    sphere(pt3d cen, double r, std::shared_ptr<material> m)
+            : center(cen), radius(r), mat_ptr(m) {};
 
     virtual bool hit(
             const ray& r, double t_min, double t_max, hit_record& rec) const override;
 
 public:
-    point3 center;
+    pt3d center;
     double radius;
+    std::shared_ptr<material> mat_ptr;
 };
 
 bool sphere::hit(const ray& r, double t_min, double t_max, hit_record& rec) const {
@@ -193,6 +238,7 @@ bool sphere::hit(const ray& r, double t_min, double t_max, hit_record& rec) cons
     rec.t = root;
     rec.p = r.at(rec.t);
     rec.normal = (rec.p - center) / radius;
+    rec.mat_ptr = mat_ptr;
 
     return true;
 }
@@ -240,7 +286,7 @@ public:
         auto viewport_width = aspect_ratio * viewport_height;
         auto focal_length = 1.0;
 
-        origin = point3(0, 0, 0);
+        origin = pt3d(0, 0, 0);
         horizontal = vec3(viewport_width, 0.0, 0.0);
         vertical = vec3(0.0, viewport_height, 0.0);
         lower_left_corner = origin - horizontal/2 - vertical/2 - vec3(0, 0, focal_length);
@@ -251,71 +297,77 @@ public:
     }
 
 private:
-    point3 origin;
-    point3 lower_left_corner;
+    pt3d origin;
+    pt3d lower_left_corner;
     vec3 horizontal;
     vec3 vertical;
 };
-
-//const int W = 800;
-const int W = 40;
-const int H = static_cast<int>(W / aspect_ratio);
 
 void write_to_img(uint8_t *img, int x, int y, rgba color) {
     int pos = 4 * (x + y*W);
     *(uint32_t*)(img+pos) = color.rgba_u32();
 }
+
 inline double degrees_to_radians(double degrees) {
     return degrees * pi / 180.0;
 }
 
-color ray_color(const ray& r, const hittable& world) {
+vec3 random_in_unit_sphere() {
+    while (true) {
+        auto p = vec3::random(-1,1);
+        if (p.length_squared() >= 1) continue;
+        return p;
+    }
+}
+
+vec3 ray_color(const ray& r, const hittable& world, int depth) {
+
+    if (depth <= 0)
+        return vec3(0,0,0);
+
     hit_record rec;
-    if (world.hit(r, 0, infinity, rec)) {
-        return 0.5 * (rec.normal + color(1,1,1));
+    if (world.hit(r, 0.001, infinity, rec)) {
+        vec3 target = rec.p + rec.normal + random_in_unit_sphere();
+        return 0.5 * ray_color(ray(rec.p, target - rec.p), world, depth-1);
     }
     vec3 unit_direction = unit_vector(r.direction());
     auto t = 0.5*(unit_direction.y() + 1.0);
-    return (1.0-t)*color(1.0, 1.0, 1.0) + t*color(0.5, 0.7, 1.0);
+    return (1.0-t)*vec3(1.0, 1.0, 1.0) + t*vec3(0.5, 0.7, 1.0);
 }
 
 int main() {
 
     // Image
 
-    const std::string filename("D:\\cur\\render_rs\\raytrace_cpp\\img\\raytrace2.png");
+    const std::string filename("D:/cur/render_rs/raytrace_cpp/book_impl/img/raytrace_sample.png");
     auto *image = (uint8_t*)calloc(H * W * 4, sizeof(uint8_t));
 
     // World
     hittable_list world;
-    world.add(make_shared<sphere>(point3(0,0,-1), 0.5));
-    world.add(make_shared<sphere>(point3(0,-100.5,-1), 100));
+    world.add(make_shared<sphere>(pt3d(0, 0, -1), 0.5));
+    world.add(make_shared<sphere>(pt3d(0, -100.5, -1), 100));
     //
     // Camera
+    camera cam;
 
-    auto viewport_height = 2.0;
-    auto viewport_width = aspect_ratio * viewport_height;
-    auto focal_length = 1.0;
-
-    auto origin = point3(0, 0, 0);
-    auto horizontal = vec3(viewport_width, 0, 0);
-    auto vertical = vec3(0, viewport_height, 0);
-    auto lower_left_corner = origin - horizontal/2 - vertical/2 - vec3(0, 0, focal_length);
-
-    // Render
-
+    auto st = high_resolution_clock::now();
     std::cout << "P3\n" << W << ' ' << H << "\n255\n";
 
     for (int i = 0, ii = W - 1; i < W; ++i, --ii) {
-        std::cerr << "\rScanlines remaining: " << i << ' ' << std::flush;
         for (int j = 0, jj = H - 1; j < H; ++j, --jj) {
-            auto u = double(i) / (W - 1);
-            auto v = double(j) / (H - 1);
-            ray r(origin, lower_left_corner + u*horizontal + v*vertical);
-            color pixel_color = ray_color(r, world);
-            write_to_img(image, i, jj, rgba(pixel_color));
+            vec3 c;
+            for (int k = 0; k < sample_count; ++k) {
+                auto u = (i + random_double()) / (W-1);
+                auto v = (j + random_double()) / (H-1);
+                c += ray_color(cam.get_ray(u, v), world, max_depth);
+            }
+            write_to_img(image, i, jj, rgba(c));
         }
+        std::cout << i << " " << std::flush;
     }
+
+    duration<float> duration = (high_resolution_clock::now() - st);
+    std::cout << "\nelapse: " << duration.count() << std::endl;
 
     stbi_write_png(filename.c_str(), W, H, 4, image, W * 4);
     std::cerr << "\nDone.\n";
