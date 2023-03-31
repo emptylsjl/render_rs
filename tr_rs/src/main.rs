@@ -18,6 +18,7 @@ use std::time::SystemTime;
 
 use image::{GenericImage, GenericImageView, ImageBuffer, Pixel, Primitive, Rgb, Rgba, RgbaImage};
 use image::codecs::hdr::Rgbe8Pixel;
+use num_traits::Signed;
 use once_cell::sync::Lazy;
 
 fn p3d(v: &V4d) -> V3d {

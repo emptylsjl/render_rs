@@ -1,11 +1,18 @@
 
 #![feature(type_ascription)]
 #![feature(test)]
+#![feature(iter_collect_into)]
+
+mod a;
+
 extern crate test;
 
 use std::mem::MaybeUninit;
+use std::time::Instant;
 use ash::extensions::{ext, khr};
 use ash::{vk, *};
+use vulkano_shaders::shader;
+use crate::a::run;
 
 
 #[derive(Debug)]
@@ -21,6 +28,7 @@ impl Drop for A {
 }
 
 #[derive(Debug)]
+
 struct B {
     b0: String
 }
@@ -32,6 +40,14 @@ impl Drop for B {
 }
 
 fn main() {
+
+    // let now = Instant::now();
+    // run();
+    // println!("Elapsed: {:.8?}", now.elapsed());
+    
+
+
+
     // let this_file = include_str!("main.rs");
     // println!("{this_file}");
     //
@@ -61,17 +77,19 @@ fn main() {
     // a0.a0 = B {b0: "5".to_string()};
 
     // let a = [Some((233, "abc")), None];
-    let a = [Ok((233, "abc")), Err(233)];
-    let b = a[0].map(|x| { println!("1"); x.0});
-    let c = a[1].map(|x| { println!("2"); x.0});
-    let d = a[0].map_or(0, |x| { println!("3"); x.0});
-    let e = a[1].map_or(0, |x| { println!("4"); x.0});
-    let f = a[0].map_err(|x| { println!("5"); 244});
-    let g = a[1].map_err(|x| { println!("6"); 244});
-    println!("- {b:?}");
-    println!("- {c:?}");
-    println!(" -{d:?}");
-    println!(" -{e:?}");
-    println!("- {f:?}");
-    println!("- {g:?}");
+    // let a = [Ok((233, "abc")), Err(233)];
+    // let b = a[0].map(|x| { println!("1"); x.0});
+    // let c = a[1].map(|x| { println!("2"); x.0});
+    // let d = a[0].map_or(0, |x| { println!("3"); x.0});
+    // let e = a[1].map_or(0, |x| { println!("4"); x.0});
+    // let f = a[0].map_err(|x| { println!("5"); 244});
+    // let g = a[1].map_err(|x| { println!("6"); 244});
+    // println!("- {b:?}");
+    // println!("- {c:?}");
+    // println!(" -{d:?}");
+    // println!(" -{e:?}");
+    // println!("- {f:?}");
+    // println!("- {g:?}");
+
+
 }

@@ -6,7 +6,6 @@ use std::mem::MaybeUninit;
 
 use ash::{*, prelude::VkResult};
 use ash::extensions::{khr, ext};
-use ash::vk::PhysicalDevice;
 use smallvec::{smallvec, SmallVec};
 use crate::vk_proc::proc::{char2s, VKProc};
 
@@ -20,7 +19,7 @@ pub struct VKDevice<'a> {
 
 #[derive(Clone, Default)]
 pub struct VKDeviceProperty {
-    pub physical_device: PhysicalDevice,
+    physical_device: vk::PhysicalDevice,
     queues: Vec<vk::QueueFamilyProperties>,
     features: vk::PhysicalDeviceFeatures,
     properties: vk::PhysicalDeviceProperties,
@@ -88,7 +87,7 @@ impl<'a> VKDevice<'a> {
 
     pub fn create_graphical_device(
         vkproc: &VKProc,
-        physical_device: PhysicalDevice,
+        physical_device: vk::PhysicalDevice,
         index: u32
     ) -> (Device, GraphicQueue) {
 
@@ -116,13 +115,26 @@ impl<'a> VKDevice<'a> {
         }
     }
 
+    pub fn find_memory_type(&self, memory_type_bits: u32, memory_type_flag: vk::MemoryPropertyFlags) -> Option<usize> {
+        let memory_properties = self.props.memory_properties;
+
+        memory_properties.memory_types[..memory_properties.memory_type_count as _]
+            .iter()
+            .enumerate()
+            .position(|(i, memory_type)| {
+                (((1 << i) & memory_type_bits) != 0) && ((memory_type.property_flags & memory_type_flag) == memory_type_flag)
+            })
+    }
+
     pub fn name(&self) -> String {
         char2s(&self.props.properties.device_name)
     }
 
-    pub fn physical_device(&self) -> &PhysicalDevice {
+    pub fn physical_device(&self) -> &vk::PhysicalDevice {
         &self.props.physical_device
     }
+
+    pub fn memory_properties(&self) -> &vk::PhysicalDeviceMemoryProperties { &self.props.memory_properties }
 }
 
 impl Drop for VKDevice<'_> {

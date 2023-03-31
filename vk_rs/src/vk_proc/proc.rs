@@ -159,7 +159,7 @@ impl VKProc {
         }
     }
 
-    pub fn init_khr_validation(mut self) -> Self {
+    pub fn validation_callback(mut self) -> Self {
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR |
