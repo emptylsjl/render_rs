@@ -52,9 +52,11 @@ impl<'a> VKWindow<'a> {
     pub fn get_format(&self) -> SurfaceFormatKHR {
         self.prop.formats[1]
     }
+
     pub fn get_extent(&self) -> Extent2D {
         self.prop.capabilities.current_extent
     }
+
     pub fn get_dim_window(&self) -> PhysicalSize<u32> {
         self.window.inner_size()
     }
@@ -313,14 +315,14 @@ impl<'a> VKPresent<'a> {
         self.update_framebuffer(render_pass);
     }
 
-    pub fn recreate_swapchain_from_physical_size(&mut self, render_pass: &RenderPass) {
-        self.destroy();
-        let size = self.window.get_dim_window();
-        let extent = Extent2D::default()
-        self.update_swapchain();
-        self.update_image_views();
-        self.update_framebuffer(render_pass);
-    }
+    // pub fn recreate_swapchain_from_physical_size(&mut self, render_pass: &RenderPass) {
+    //     self.destroy();
+    //     let size = self.window.get_dim_window();
+    //     let extent = Extent2D::default();
+    //     self.update_swapchain();
+    //     self.update_image_views();
+    //     self.update_framebuffer(render_pass);
+    // }
 
     pub fn destroy(&mut self) {
         unsafe {

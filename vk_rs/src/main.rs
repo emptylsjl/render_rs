@@ -17,7 +17,7 @@ use std::sync::Arc;
 use ash::{*, prelude::VkResult};
 use ash::extensions::{khr, ext};
 use ash::extensions::ext::DebugUtils;
-use ash::vk::{DebugUtilsMessengerEXT, Format};
+use ash::vk::{Buffer, DebugUtilsMessengerEXT, Format};
 use winit::{
     event::{Event, DeviceEvent as DE, WindowEvent as WE},
     event_loop::EventLoop,
@@ -34,36 +34,20 @@ mod vk_proc;
 mod present;
 mod device;
 mod swapchain;
+mod vertex;
 
 use define::*;
 use present::SurfaceProperty;
 use vk_proc::proc::VKProc;
 use crate::device::VKDevice;
 use crate::present::{create_swapchain, create_vk_surface, VKPresent, VKWindow};
+use crate::vertex::{Vertex, Vertices};
 
 
 fn chars(s: &[u8]) -> &CStr {
     CStr::from_bytes_with_nul(s).unwrap()
 }
 
-unsafe extern "system" fn debug_callback(
-    msg_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    msg_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    _user_data: *mut std::os::raw::c_void,
-) -> vk::Bool32 {
-    let data = *callback_data;
-    let name = CStr::from_ptr(data.p_message_id_name);
-    let message = CStr::from_ptr(data.p_message);
-    let severity = format!("{msg_severity:?}");
-    let mtype = format!("{msg_type:?}");
-
-    println!("\
-        {severity:<10} | {mtype:<10} | {name:?}\n\
-        {message:?}\
-    ");
-    vk::FALSE
-}
 
 fn spirv_from_bytes(bytes: &[u8]) -> Vec<u32> {
 
@@ -155,14 +139,49 @@ fn create_render_pass(device: &VKDevice, format: Format) -> vk::RenderPass {
     }
 }
 
+fn create_vertex_buffer(
+    device: &VKDevice,
+    vertices: &Vertices,
+) {
+    unsafe {
+        let vertex_buffer_create_info = vk::BufferCreateInfo::default()
+            .size(vertices.mem_size() as u64)
+            .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+        let buffer = device.device
+            .create_buffer(&vertex_buffer_create_info, None)
+            .expect("create vertex buffer");
+        let buffer_memory_requirements = device.device
+            .get_buffer_memory_requirements(buffer);
+
+        let Some(memory_type_index) = device.find_memory_type(
+            buffer_memory_requirements.memory_type_bits,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+        ) else {
+            panic!("find memory_type")
+        };
+
+        let vertex_buffer_allocate_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(buffer_memory_requirements.size)
+            .memory_type_index(memory_type_index as u32);
+    }
+}
+
 fn create_graphic_pipeline(
     device: &Device,
+    vertices: Vertices,
     render_pass: &vk::RenderPass,
     pipeline_layout: &vk::PipelineLayout,
     shader_create_infos: &[vk::PipelineShaderStageCreateInfo],
 ) -> Vec<vk::Pipeline> {
 
-    let vertex_input_create_info = vk::PipelineVertexInputStateCreateInfo::default();
+    let vertex_binding_descriptions = Vertex::binding_description();
+    let vertex_attribute_descriptions = Vertices::attribute_descriptions();
+
+    let vertex_input_create_info = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(&vertex_binding_descriptions)
+        .vertex_attribute_descriptions(&vertex_attribute_descriptions);
 
     let input_assembly_create_info = vk::PipelineInputAssemblyStateCreateInfo::default()
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
@@ -321,7 +340,7 @@ fn record_command_buffer(
 
 fn main() {
 
-    let vkproc = VKProc::new(true).init_khr_validation();
+    let vkproc = VKProc::new(true);
 
     // let entry = &vkproc.entry;
     // let instance = &vkproc.instance;
@@ -350,6 +369,25 @@ fn main() {
     let queue_index = vkdevice.graphic_queue.index;
 
 
+
+    let vertices = Vertices::new(vec![
+        Vertex::from_arr(
+            [-0.4, 0.4, 0.0, 0.4],
+            [0.0, 1.0, 0.0, 1.0]
+        ),
+        Vertex::from_arr(
+            [0.4, 0.4, 0.0, 0.4],
+            [0.0, 0.0, 1.0, 1.0]
+        ),
+        Vertex::from_arr(
+            [0.4, -0.4, 0.0, 0.4],
+            [1.0, 0.0, 0.0, 1.0]
+        ),
+    ]);
+
+    create_vertex_buffer(&vkdevice, &vertices);
+
+
     let frag_create_info = create_shader_module(&device, include_bytes!("shader/frag.spv"), vk::ShaderStageFlags::FRAGMENT);
     let vert_create_info = create_shader_module(&device, include_bytes!("shader/vert.spv"), vk::ShaderStageFlags::VERTEX);
     let shader_create_infos = [
@@ -357,7 +395,7 @@ fn main() {
         vert_create_info
     ];
     let pipeline_layout = create_pipeline_layout(&device);
-    let graphic_pipelines = create_graphic_pipeline(&device, &render_pass, &pipeline_layout, &shader_create_infos);
+    let graphic_pipelines = create_graphic_pipeline(&device, vertices, &render_pass, &pipeline_layout, &shader_create_infos);
 
     let command_pool = create_command_pool(&device, queue_index);
     let command_buffers = command_buffer_allocate(&device, &command_pool);
@@ -418,6 +456,7 @@ fn main() {
                                 index
                             }
                             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                                println!("1");
                                 vkpresent.recreate_swapchain(&render_pass);
                                 break 'draw
                             }
@@ -459,16 +498,15 @@ fn main() {
                             .image_indices(&image_indexes);
 
                         match vkpresent.proc.queue_present(queue, &present_info) {
-                            Ok(false) => {}
-                            Ok(true) => { recreate = true }
-                            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { recreate = true }
+                            Ok(suboptimal) => { recreate = suboptimal }
+                            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { println!("2"); recreate = true }
                             Err(a) => { print!("miao miao miao\n{a:?}"); }
                         };
+                        if recreate {
+                            vkpresent.recreate_swapchain(&render_pass);
+                            recreate = false;
+                        }
                         index += 1;
-                    }
-                    if recreate {
-                        vkpresent.recreate_swapchain(&render_pass);
-                        recreate = false;
                     }
                 }
             }

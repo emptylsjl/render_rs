@@ -5,22 +5,23 @@
 #include <vector>
 #include <limits>
 #include <memory>
+#include <thread>
+
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#include "../book_sample/src/InOneWeekend/material.h"
 
 #include <chrono>
 using namespace std::chrono;
 
 
-const double infinity = std::numeric_limits<double>::infinity();
+const double inf = std::numeric_limits<double>::infinity();
 const double pi = 3.1415926535897932385;
 const auto aspect_ratio = 16.0 / 9.0;
 const int W = 800;
 //const int W = 40;
 const int H = static_cast<int>(W / aspect_ratio);
-const double sample_count = 100;
+const double sample_count = 200;
 const int max_depth = 50;
 
 
@@ -88,6 +89,12 @@ public:
         return vec3(random_double(min,max), random_double(min,max), random_double(min,max));
     }
 
+    bool near_zero() const {
+        // Return true if the vector is close to zero in all dimensions.
+        const auto s = 1e-8;
+        return (fabs(e[0]) < s) && (fabs(e[1]) < s) && (fabs(e[2]) < s);
+    }
+
 public:
     double e[3];
 };
@@ -134,6 +141,59 @@ inline vec3 cross(const vec3 &u, const vec3 &v) {
 
 inline vec3 unit_vector(vec3 v) {
     return v / v.length();
+}
+
+inline vec3 normalized(vec3 v) {
+    return v / v.length();
+}
+
+inline vec3 random_in_unit_disk() {
+    while (true) {
+        auto p = vec3(random_double(-1,1), random_double(-1,1), 0);
+        if (p.length_squared() >= 1) continue;
+        return p;
+    }
+}
+
+inline vec3 random_in_unit_sphere() {
+    while (true) {
+        auto p = vec3::random(-1,1);
+        if (p.length_squared() >= 1) continue;
+        return p;
+    }
+}
+
+inline vec3 random_unit_vector() {
+    return normalized(random_in_unit_sphere());
+//    vec3 a = vec3::random(-1, 1);
+//    return a/a.sum();
+}
+
+inline vec3 random_unit_vector(vec3& normal) {
+    vec3 in_unit_sphere = random_in_unit_sphere();
+    if (dot(in_unit_sphere, normal) > 0.0) // In the same hemisphere as the normal
+        return in_unit_sphere;
+    else
+        return -in_unit_sphere;
+}
+
+inline vec3 random_in_hemisphere(const vec3& normal) {
+    vec3 in_unit_sphere = random_in_unit_sphere();
+    if (dot(in_unit_sphere, normal) > 0.0) // In the same hemisphere as the normal
+        return in_unit_sphere;
+    else
+        return -in_unit_sphere;
+}
+
+inline vec3 reflect(const vec3& v, const vec3& n) {
+    return v - 2*dot(v,n)*n;
+}
+
+inline vec3 refract(const vec3& uv, const vec3& n, double etai_over_etat) {
+    auto cos_theta = fmin(dot(-uv, n), 1.0);
+    vec3 r_out_perp =  etai_over_etat * (uv + cos_theta*n);
+    vec3 r_out_parallel = -sqrt(fabs(1.0 - r_out_perp.length_squared())) * n;
+    return r_out_perp + r_out_parallel;
 }
 
 using pt3d = vec3;   // 3D point
@@ -183,6 +243,8 @@ public:
     uint8_t c[4];
 };
 
+class material;
+
 struct hit_record {
     pt3d p;
     vec3 normal;
@@ -197,8 +259,8 @@ struct hit_record {
 };
 
 class hittable {
-    public:
-        virtual bool hit(const ray& r, double t_min, double t_max, hit_record& rec) const = 0;
+public:
+    virtual bool hit(const ray& r, double t_min, double t_max, hit_record& rec) const = 0;
 };
 
 class sphere : public hittable {
@@ -278,6 +340,96 @@ bool hittable_list::hit(const ray& r, double t_min, double t_max, hit_record& re
     return hit_anything;
 }
 
+class material {
+public:
+    virtual bool scatter(
+            const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered
+    ) const = 0;
+};
+
+
+class lambertian : public material {
+public:
+    lambertian(const vec3& a) : albedo(a) {}
+
+    bool scatter(
+            const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered
+    ) const override {
+        auto scatter_direction = rec.normal + random_unit_vector();
+
+        // Catch degenerate scatter direction
+        if (scatter_direction.near_zero())
+            scatter_direction = rec.normal;
+
+        scattered = ray(rec.p, scatter_direction);
+        attenuation = albedo;
+        return true;
+    }
+
+public:
+    vec3 albedo;
+};
+
+
+class metal : public material {
+public:
+    metal(const vec3& a, double f) : albedo(a), fuzz(f < 1 ? f : 1) {}
+    metal(const vec3& a) : albedo(a) {}
+
+    virtual bool scatter(
+            const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered
+    ) const override {
+        vec3 reflected = reflect(unit_vector(r_in.direction()), rec.normal);
+        scattered = ray(rec.p, reflected);
+//        scattered = ray(rec.p, reflected + fuzz*random_in_unit_sphere());
+        attenuation = albedo;
+        return (dot(scattered.direction(), rec.normal) > 0);
+    }
+
+public:
+    vec3 albedo;
+    double fuzz;
+};
+
+
+class dielectric : public material {
+public:
+    dielectric(double index_of_refraction) : ir(index_of_refraction) {}
+
+    virtual bool scatter(
+            const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered
+    ) const override {
+        attenuation = vec3(1.0, 1.0, 1.0);
+        double refraction_ratio = rec.front_face ? (1.0/ir) : ir;
+
+        vec3 unit_direction = unit_vector(r_in.direction());
+        double cos_theta = fmin(dot(-unit_direction, rec.normal), 1.0);
+        double sin_theta = sqrt(1.0 - cos_theta*cos_theta);
+
+        bool cannot_refract = refraction_ratio * sin_theta > 1.0;
+        vec3 direction;
+
+        if (cannot_refract || reflectance(cos_theta, refraction_ratio) > random_double())
+            direction = reflect(unit_direction, rec.normal);
+        else
+            direction = refract(unit_direction, rec.normal, refraction_ratio);
+
+        scattered = ray(rec.p, direction);
+        return true;
+    }
+
+public:
+    double ir; // Index of Refraction
+
+private:
+    static double reflectance(double cosine, double ref_idx) {
+        // Use Schlick's approximation for reflectance.
+        auto r0 = (1-ref_idx) / (1+ref_idx);
+        r0 = r0*r0;
+        return r0 + (1-r0)*pow((1 - cosine),5);
+    }
+};
+
 class camera {
 public:
     camera() {
@@ -308,31 +460,32 @@ void write_to_img(uint8_t *img, int x, int y, rgba color) {
     *(uint32_t*)(img+pos) = color.rgba_u32();
 }
 
-inline double degrees_to_radians(double degrees) {
-    return degrees * pi / 180.0;
-}
-
-vec3 random_in_unit_sphere() {
-    while (true) {
-        auto p = vec3::random(-1,1);
-        if (p.length_squared() >= 1) continue;
-        return p;
-    }
-}
-
 vec3 ray_color(const ray& r, const hittable& world, int depth) {
 
     if (depth <= 0)
         return vec3(0,0,0);
 
     hit_record rec;
-    if (world.hit(r, 0.001, infinity, rec)) {
-        vec3 target = rec.p + rec.normal + random_in_unit_sphere();
-        return 0.5 * ray_color(ray(rec.p, target - rec.p), world, depth-1);
+    if (world.hit(r, 0.001, inf, rec)) {
+        ray scattered;
+        vec3 attenuation;
+        if (rec.mat_ptr->scatter(r, rec, attenuation, scattered))
+            return attenuation * ray_color(scattered, world, depth-1);
+        return vec3(0,0,0);
     }
+
     vec3 unit_direction = unit_vector(r.direction());
     auto t = 0.5*(unit_direction.y() + 1.0);
     return (1.0-t)*vec3(1.0, 1.0, 1.0) + t*vec3(0.5, 0.7, 1.0);
+}
+
+bool sum(int *l, int len) {
+    int a = 0;
+    for (int i = 0; i < len; ++i)
+        a += l[i];
+    printf("\r%.02f %%", double(a)*100/W);
+    std::flush(std::cout);
+    return a < W;
 }
 
 int main() {
@@ -344,27 +497,64 @@ int main() {
 
     // World
     hittable_list world;
-    world.add(make_shared<sphere>(pt3d(0, 0, -1), 0.5));
-    world.add(make_shared<sphere>(pt3d(0, -100.5, -1), 100));
+
+    auto material_ground = make_shared<lambertian>(vec3(0.8, 0.8, 0.0));
+    auto material_center = make_shared<lambertian>(vec3(0.7, 0.3, 0.3));
+    auto material_left   = make_shared<metal>(vec3(0.8, 0.8, 0.8));
+    auto material_right  = make_shared<metal>(vec3(0.2, 0.6, 0.2));
+
+    world.add(make_shared<sphere>(vec3( 0.0, -100.5, -1.0), 100.0, material_ground));
+    world.add(make_shared<sphere>(vec3( 0.0,    0.0, -1.0),   0.5, material_center));
+    world.add(make_shared<sphere>(vec3(-1.0,    0.0, -1.0),   0.5, material_left));
+    world.add(make_shared<sphere>(vec3( 1.0,    0.0, -1.0),   0.5, material_right));
     //
     // Camera
     camera cam;
 
-    auto st = high_resolution_clock::now();
-    std::cout << "P3\n" << W << ' ' << H << "\n255\n";
+    const int ct = 8;
+    int rg = W / ct;
+    int stage[ct] = {};
+    std::thread th[ct] = {};
 
-    for (int i = 0, ii = W - 1; i < W; ++i, --ii) {
-        for (int j = 0, jj = H - 1; j < H; ++j, --jj) {
-            vec3 c;
-            for (int k = 0; k < sample_count; ++k) {
-                auto u = (i + random_double()) / (W-1);
-                auto v = (j + random_double()) / (H-1);
-                c += ray_color(cam.get_ray(u, v), world, max_depth);
+    auto f = [&](int pos, int st, int ed) {
+        for (int i = st, ii = ed - 1; i < ed; ++i, --ii) {
+            for (int j = 0, jj = H - 1; j < H; ++j, --jj) {
+                vec3 c;
+                for (int k = 0; k < sample_count; ++k) {
+                    auto u = (i + random_double()) / (W-1);
+                    auto v = (j + random_double()) / (H-1);
+                    c += ray_color(cam.get_ray(u, v), world, max_depth);
+                }
+                write_to_img(image, i, jj, rgba(c));
             }
-            write_to_img(image, i, jj, rgba(c));
+            stage[pos] = i-st+1;
         }
-        std::cout << i << " " << std::flush;
-    }
+    };
+
+    auto st = high_resolution_clock::now();
+
+    for (int i = 0; i < ct; ++i)
+        th[i] = std::thread(f, i, i*rg, i*rg+rg);
+    while (sum(stage, ct))
+        std::this_thread::sleep_for(milliseconds(100));
+    for (auto & t : th)
+        t.join();
+
+
+//    for (int i = 0, ii = W - 1; i < W; ++i, --ii) {
+//        for (int j = 0, jj = H - 1; j < H; ++j, --jj) {
+//            vec3 c;
+//            for (int k = 0; k < sample_count; ++k) {
+//                auto u = (i + random_double()) / (W-1);
+//                auto v = (j + random_double()) / (H-1);
+//                c += ray_color(cam.get_ray(u, v), world, max_depth);
+//            }
+//            write_to_img(image, i, jj, rgba(c));
+//        }
+//        printf("%d ", i);
+//    }
+
+
 
     duration<float> duration = (high_resolution_clock::now() - st);
     std::cout << "\nelapse: " << duration.count() << std::endl;
