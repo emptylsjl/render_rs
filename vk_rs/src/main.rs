@@ -4,20 +4,13 @@
 
 extern crate core;
 
-use core::panicking::panic;
-use std::borrow::Cow;
 use std::error::Error;
 use std::ffi::{c_char, CStr};
 use std::fmt::{Debug, Formatter, Pointer};
-use std::iter::{Map, once};
-use std::{ptr, slice};
-use std::slice::Iter;
-use std::sync::Arc;
+use std::{ptr, slice, time};
 
-use ash::{*, prelude::VkResult};
-use ash::extensions::{khr, ext};
-use ash::extensions::ext::DebugUtils;
-use ash::vk::{Buffer, DebugUtilsMessengerEXT, Format};
+use ash::{*, };
+use itertools::Itertools;
 use winit::{
     event::{Event, DeviceEvent as DE, WindowEvent as WE},
     event_loop::EventLoop,
@@ -37,17 +30,10 @@ mod swapchain;
 mod vertex;
 
 use define::*;
-use present::SurfaceProperty;
 use vk_proc::proc::VKProc;
 use crate::device::VKDevice;
-use crate::present::{create_swapchain, create_vk_surface, VKPresent, VKWindow};
-use crate::vertex::{Vertex, Vertices};
-
-
-fn chars(s: &[u8]) -> &CStr {
-    CStr::from_bytes_with_nul(s).unwrap()
-}
-
+use crate::present::{create_vk_surface, VKPresent, VKWindow};
+use crate::vertex::{camera, Vertex, Vertices};
 
 fn spirv_from_bytes(bytes: &[u8]) -> Vec<u32> {
 
@@ -82,18 +68,104 @@ fn create_shader_module<'a>(device: &Device, bytes: &[u8], stage: vk::ShaderStag
     vk::PipelineShaderStageCreateInfo::default()
         .stage(stage)
         .module(shader_module)
-        .name(chars(b"main\0"))
+        .name(CStr::from_bytes_with_nul(b"main\0").unwrap())
 }
 
-fn create_pipeline_layout(device: &Device) -> vk::PipelineLayout {
-    let layout_create_info = vk::PipelineLayoutCreateInfo::default();
+
+fn create_descriptor_set_layout(device: &VKDevice) -> vk::DescriptorSetLayout {
+
+    let descriptor_set_layout_binding =  [
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::VERTEX),
+    ];
+
+    let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo::default()
+        .bindings(&descriptor_set_layout_binding);
 
     unsafe {
-        device.create_pipeline_layout(&layout_create_info, None).expect("create pipeline layout")
+        device.device
+            .create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
+            .expect("Failed to create Descriptor Set Layout!")
     }
 }
 
-fn create_render_pass(device: &VKDevice, format: Format) -> vk::RenderPass {
+fn create_descriptor_pool(device: &VKDevice) -> vk::DescriptorPool {
+
+    let descriptor_pool_sizes = [
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(FRAMES_IN_FLIGHT as u32)
+    ];
+
+    let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::default()
+        .max_sets(FRAMES_IN_FLIGHT as u32)
+        .pool_sizes(&descriptor_pool_sizes);
+
+    unsafe {
+        device.device
+            .create_descriptor_pool(&descriptor_pool_create_info, None)
+            .expect("create Descriptor Pool")
+    }
+}
+
+fn create_descriptor_sets<T>(
+    device: &VKDevice,
+    descriptor_pool: &vk::DescriptorPool,
+    descriptor_set_layout: &vk::DescriptorSetLayout,
+    uniform_buffers: &Vec<VKBuffer<T>>,
+    // texture_image_view: vk::ImageView,
+    // texture_sampler: vk::Sampler,
+) -> Vec<vk::DescriptorSet> {
+
+    let layouts = [*descriptor_set_layout; FRAMES_IN_FLIGHT];
+
+    let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::default()
+        .descriptor_pool(*descriptor_pool)
+        .set_layouts(&layouts);
+
+    let descriptor_sets = unsafe {
+        device.device
+            .allocate_descriptor_sets(&descriptor_set_allocate_info)
+            .expect("Failed to allocate descriptor sets!")
+    };
+
+    descriptor_sets.iter().zip(uniform_buffers).for_each(|(&descriptor_set, &ref buffer)| {
+        let descriptor_buffer_info = [
+            vk::DescriptorBufferInfo::default()
+                .range(std::mem::size_of::<glam::Mat4>() as u64)
+                .buffer(buffer.buffer)
+                .offset(0)
+            ];
+        let descriptor_write_set = vk::WriteDescriptorSet::default()
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .buffer_info(&descriptor_buffer_info)
+            .dst_set(descriptor_set)
+            .dst_array_element(0)
+            .dst_binding(0);
+
+        unsafe {
+            device.device.update_descriptor_sets(&[descriptor_write_set], &[]);
+        }
+    });
+    descriptor_sets
+}
+
+fn create_pipeline_layout(device: &VKDevice, descriptor_set_layout: &[vk::DescriptorSetLayout]) -> vk::PipelineLayout {
+
+    let layout_create_info = vk::PipelineLayoutCreateInfo::default()
+        .set_layouts(descriptor_set_layout);
+
+    unsafe {
+        device.device
+            .create_pipeline_layout(&layout_create_info, None)
+            .expect("create pipeline layout")
+    }
+}
+
+fn create_render_pass(device: &VKDevice, format: vk::Format) -> vk::RenderPass {
 
     let attachment_description = [
         vk::AttachmentDescription::default()
@@ -139,38 +211,8 @@ fn create_render_pass(device: &VKDevice, format: Format) -> vk::RenderPass {
     }
 }
 
-fn create_vertex_buffer(
-    device: &VKDevice,
-    vertices: &Vertices,
-) {
-    unsafe {
-        let vertex_buffer_create_info = vk::BufferCreateInfo::default()
-            .size(vertices.mem_size() as u64)
-            .usage(vk::BufferUsageFlags::VERTEX_BUFFER)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-        let buffer = device.device
-            .create_buffer(&vertex_buffer_create_info, None)
-            .expect("create vertex buffer");
-        let buffer_memory_requirements = device.device
-            .get_buffer_memory_requirements(buffer);
-
-        let Some(memory_type_index) = device.find_memory_type(
-            buffer_memory_requirements.memory_type_bits,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-        ) else {
-            panic!("find memory_type")
-        };
-
-        let vertex_buffer_allocate_info = vk::MemoryAllocateInfo::default()
-            .allocation_size(buffer_memory_requirements.size)
-            .memory_type_index(memory_type_index as u32);
-    }
-}
-
 fn create_graphic_pipeline(
-    device: &Device,
-    vertices: Vertices,
+    device: &VKDevice,
     render_pass: &vk::RenderPass,
     pipeline_layout: &vk::PipelineLayout,
     shader_create_infos: &[vk::PipelineShaderStageCreateInfo],
@@ -248,30 +290,9 @@ fn create_graphic_pipeline(
     ];
 
     unsafe {
-        device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info, None)
+        device.device
+            .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info, None)
             .expect("create graphics pipeline")
-    }
-}
-
-
-fn create_command_pool(device: &Device, queue_family_index: u32) -> vk::CommandPool {
-
-    let pool_create_info = vk::CommandPoolCreateInfo::default()
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-        .queue_family_index(queue_family_index);
-
-    unsafe { device.create_command_pool(&pool_create_info, None).expect("create command pool") }
-}
-
-fn command_buffer_allocate(device: &Device, pool: &vk::CommandPool) -> Vec<vk::CommandBuffer> {
-
-    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(2)
-        .command_pool(*pool);
-
-    unsafe {
-        device.allocate_command_buffers(&command_buffer_allocate_info).expect("create command buffer")
     }
 }
 
@@ -280,14 +301,16 @@ fn record_command_buffer(
     present: &VKPresent,
     image_index: &u32,
     render_pass: &vk::RenderPass,
+    index_buffer: &vk::Buffer,
+    vertex_buffer: &vk::Buffer,
     command_buffer: &vk::CommandBuffer,
+    descriptor_set: &vk::DescriptorSet,
+    pipeline_layout: &vk::PipelineLayout,
     graphic_pipeline: &vk::Pipeline,
 ) {
+    let descriptor_sets = [*descriptor_set];
     let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
         .flags(vk::CommandBufferUsageFlags::default());
-    unsafe {
-        device.device.begin_command_buffer(*command_buffer, &command_buffer_begin_info).expect("begin command buffer");
-    }
 
     let clear_values = [
         vk::ClearValue {color: vk::ClearColorValue {float32: [0.,0.,0.,0.]}}
@@ -314,6 +337,9 @@ fn record_command_buffer(
     ];
 
     unsafe {
+
+        device.device.begin_command_buffer(*command_buffer, &command_buffer_begin_info).expect("begin command buffer");
+
         device.device.cmd_begin_render_pass(
             *command_buffer,
             &render_pass_begin_info,
@@ -326,10 +352,32 @@ fn record_command_buffer(
         );
         device.device.cmd_set_viewport(*command_buffer, 0, &viewports);
         device.device.cmd_set_scissor(*command_buffer, 0, &scissors);
-        device.device.cmd_draw(
+        device.device.cmd_bind_vertex_buffers(
             *command_buffer,
-            3,
+            0,
+            &[*vertex_buffer],
+            &[0],
+        );
+        device.device.cmd_bind_index_buffer(
+            *command_buffer,
+            *index_buffer,
+            0,
+            vk::IndexType::UINT32,
+        );
+        device.device.cmd_bind_descriptor_sets(
+            *command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            *pipeline_layout,
+            0,
+            &descriptor_sets,
+            &[],
+        );
+
+        device.device.cmd_draw_indexed(
+            *command_buffer,
+            6,
             1,
+            0,
             0,
             0
         );
@@ -338,19 +386,24 @@ fn record_command_buffer(
     }
 }
 
+fn slice_size<T: Copy + Sized>(slice: &[T]) -> usize {
+    std::mem::size_of::<T>() * slice.len()
+}
+
+#[derive(Debug)]
+struct VKBuffer<'a, T> {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    mapped: Option<&'a mut [T]>
+}
+
 fn main() {
-
     let vkproc = VKProc::new(true);
-
-    // let entry = &vkproc.entry;
-    // let instance = &vkproc.instance;
-    // let surface_proc = &vkproc.surface;
-    // let b = ;
 
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("window!")
-        .with_inner_size(winit::dpi::LogicalSize::new(1000, 1000))
+        .with_inner_size(winit::dpi::LogicalSize::new(H, W))
         .build(&event_loop)
         .unwrap();
 
@@ -368,24 +421,71 @@ fn main() {
     let queue = vkdevice.graphic_queue.queue;
     let queue_index = vkdevice.graphic_queue.index;
 
-
+    let command_pool = vkdevice.create_command_pool(queue_index);
+    let command_buffers = vkdevice.command_buffer_allocate(&command_pool, 2);
 
     let vertices = Vertices::new(vec![
         Vertex::from_arr(
-            [-0.4, 0.4, 0.0, 0.4],
+            [-0.4, -0.4, 0.0, 2.0],
+            [1.0, 0.0, 0.0, 1.0]
+        ),
+        Vertex::from_arr(
+            [0.4, -0.4, 0.0, 2.0],
             [0.0, 1.0, 0.0, 1.0]
         ),
         Vertex::from_arr(
-            [0.4, 0.4, 0.0, 0.4],
-            [0.0, 0.0, 1.0, 1.0]
-        ),
-        Vertex::from_arr(
-            [0.4, -0.4, 0.0, 0.4],
+            [-0.4, 0.4, 0.0, 2.0],
             [1.0, 0.0, 0.0, 1.0]
         ),
+        Vertex::from_arr(
+            [0.4, 0.4, 0.0, 2.0],
+            [0.0, 0.0, 1.0, 1.0]
+        ),
     ]);
+    let indices = [0u32, 1, 2, 3, 2, 0];
 
-    create_vertex_buffer(&vkdevice, &vertices);
+    let (temp_buffer, temp_memory) = vkdevice.create_buffer(
+        vertices.mem_size() as u64,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    );
+    vkdevice.map_memory(&vertices.pts, &temp_memory, true);
+    let (vertex_buffer, vertex_memory) = vkdevice.create_buffer(
+        vertices.mem_size() as u64,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    );
+    vkdevice.copy_memory(
+        &queue,
+        &temp_buffer,
+        &vertex_buffer,
+        vertices.mem_size() as _,
+        &command_pool,
+    );
+    vkdevice.map_memory(&indices, &temp_memory, true);
+    let (index_buffer, index_memory) = vkdevice.create_buffer(
+        vertices.mem_size() as u64,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    );
+    vkdevice.copy_memory(
+        &queue,
+        &temp_buffer,
+        &index_buffer,
+        slice_size(&indices) as _,
+        &command_pool,
+    );
+
+    let mut uniform_buffers = (0..FRAMES_IN_FLIGHT).map(|_| {
+        let (buffer, memory) = vkdevice.create_buffer(
+            std::mem::size_of::<glam::Mat4>() as u64,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        );
+        let mapped_memory = vkdevice.map_memory::<glam::Mat4>(&[camera(0.0, 0.0)], &memory, false).unwrap();
+        VKBuffer {buffer, memory, mapped: Some(mapped_memory)}
+    }).collect::<Vec<_>>();
+
 
 
     let frag_create_info = create_shader_module(&device, include_bytes!("shader/frag.spv"), vk::ShaderStageFlags::FRAGMENT);
@@ -394,12 +494,18 @@ fn main() {
         frag_create_info,
         vert_create_info
     ];
-    let pipeline_layout = create_pipeline_layout(&device);
-    let graphic_pipelines = create_graphic_pipeline(&device, vertices, &render_pass, &pipeline_layout, &shader_create_infos);
+    let descriptor_set_layout = create_descriptor_set_layout(&vkdevice);
+    let pipeline_layout = create_pipeline_layout(&vkdevice, &[descriptor_set_layout]);
 
-    let command_pool = create_command_pool(&device, queue_index);
-    let command_buffers = command_buffer_allocate(&device, &command_pool);
+    let descriptor_pool = create_descriptor_pool(&vkdevice);
+    let descriptor_sets = create_descriptor_sets(
+        &vkdevice,
+        &descriptor_pool,
+        &descriptor_set_layout,
+        &uniform_buffers
+    );
 
+    let graphic_pipelines = create_graphic_pipeline(&vkdevice, &render_pass, &pipeline_layout, &shader_create_infos);
 
     let semaphore_create_info = vk::SemaphoreCreateInfo::default();
     let fence_create_info = vk::FenceCreateInfo::default()
@@ -429,21 +535,27 @@ fn main() {
     let mut index: usize = 0;
     let mut recreate = false;
     let mut exit = false;
+    let mut fps = 0.;
+    let pstart = time::Instant::now();
+
 
     event_loop.run_return(|event, _, control_flow| {
         // println!("{event:?}");
 
         control_flow.set_wait();
+        // print!("\r{:5.04}", 1000. / (fps / index as f64));
 
 
         match event {
             Event::MainEventsCleared => {
                 vkpresent.window.window.request_redraw();
             },
-            Event::RedrawEventsCleared => 'draw: {
+            Event::RedrawEventsCleared => {
+
+                let fstart = time::Instant::now();
                 unsafe {
                     if !exit {
-                        let frame_index = index % 2;
+                        let frame_index = index % FRAMES_IN_FLIGHT;
                         device.wait_for_fences(&[draw_end_fences[frame_index]], true, u64::MAX).expect("Wait for fence failed.");
                         let image_index = match vkpresent.proc.acquire_next_image(
                             vkpresent.swapchain,
@@ -456,9 +568,8 @@ fn main() {
                                 index
                             }
                             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                                println!("1");
                                 vkpresent.recreate_swapchain(&render_pass);
-                                break 'draw
+                                return;
                             }
                             Err(a) => { panic!("miao: {a:?}") }
                         };
@@ -470,12 +581,18 @@ fn main() {
                             command_buffer,
                             vk::CommandBufferResetFlags::default(),
                         ).expect("Reset command buffer");
+                        let descriptor_set = descriptor_sets[frame_index];
+
                         record_command_buffer(
                             &vkdevice,
                             &vkpresent,
                             &image_index,
                             &render_pass,
+                            &index_buffer,
+                            &vertex_buffer,
                             &command_buffer,
+                            &descriptor_set,
+                            &pipeline_layout,
                             &graphic_pipeline,
                         );
 
@@ -499,7 +616,7 @@ fn main() {
 
                         match vkpresent.proc.queue_present(queue, &present_info) {
                             Ok(suboptimal) => { recreate = suboptimal }
-                            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { println!("2"); recreate = true }
+                            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { recreate = true }
                             Err(a) => { print!("miao miao miao\n{a:?}"); }
                         };
                         if recreate {
@@ -509,36 +626,39 @@ fn main() {
                         index += 1;
                     }
                 }
+                fps += fstart.elapsed().subsec_nanos() as f64 / 1_000_000.;
             }
-
 
             // Event::DeviceEvent {event, device_id} => {
             //     match event {
-            //         // DE::MouseMotion { delta } => {
-            //         //     println!("{delta:?}");
-            //         // }
-            //         // DE::Button { button, state } => {
-            //         //     println!("{button:?}, {state:?}")
-            //         // }
+            //         DE::MouseMotion { delta } => {
+            //             print!("\r1 - {delta:?}");
+            //         }
+            // //         // DE::Button { button, state } => {
+            // //         //     println!("{button:?}, {state:?}")
+            // //         // }
             //         _ => {}
             //     }
             // }
 
             Event::WindowEvent { event, window_id } => {
                 match event {
-                    WE::Resized(a) => unsafe {
+                    WE::Resized(dim) => {
                         // println!("{a:?}");
                         // vkpresent.recreate_swapchain(&render_pass)
                     }
-                    // WE::KeyboardInput { input, is_synthetic, .. } => {
-                    //     println!("{input:?}, {is_synthetic:?}")
-                    // }
-                    // WE::MouseInput { state, button, .. } => {
-                    //     println!("{button:?}, {state:?}")
-                    // }
-                    // WE::CursorMoved { position, .. } => {
-                    //     println!("{position:?}")
-                    // }
+                    WE::KeyboardInput { input, is_synthetic, .. } => {
+                        // println!("{input:?}, {is_synthetic:?}")
+                    }
+                    WE::MouseInput { state, button, .. } => {
+                        // println!("3 - {button:?}, {state:?}")
+                    }
+                    WE::CursorMoved { position: winit::dpi::PhysicalPosition { x, y }, .. } => {
+                        let winit::dpi::PhysicalSize {width, height } = vkpresent.window_dim();
+                        let [x, y, w, h] = [x as f32, y as _, width as _, height as _];
+
+                        print!("\r2 - {:4}:{:4}   ", x, y);
+                        uniform_buffers[index % FRAMES_IN_FLIGHT].mapped.as_mut().unwrap()[0] = camera((x-w/2.)/w, (y-h/2.)/h);}
 
                     WE::CloseRequested => {
                         unsafe {
@@ -551,8 +671,21 @@ fn main() {
                             image_available_semaphores.iter().for_each( |&semaphore| device.destroy_semaphore(semaphore, None));
 
                             device.destroy_pipeline_layout(pipeline_layout, None);
+                            device.destroy_descriptor_pool(descriptor_pool, None);
+                            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
                             device.destroy_render_pass(render_pass, None);
                             device.destroy_command_pool(command_pool, None);
+                            device.destroy_buffer(temp_buffer, None);
+                            device.free_memory(temp_memory, None);
+                            device.destroy_buffer(index_buffer, None);
+                            device.free_memory(index_memory, None);
+                            device.destroy_buffer(vertex_buffer, None);
+                            device.free_memory(vertex_memory, None);
+                            uniform_buffers.iter().for_each(|&VKBuffer{ buffer, memory, .. }| {
+                                device.unmap_memory(memory);
+                                device.destroy_buffer(buffer, None);
+                                device.free_memory(memory, None);
+                            })
                         }
                         control_flow.set_exit();
                         exit = true;

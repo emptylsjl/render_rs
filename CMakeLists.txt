@@ -4,4 +4,4 @@ project(render_test)
 set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(vk_cpp)
-add_subdirectory(raytrace_cpp)
+add_subdirectory(pathtrace_cpp)

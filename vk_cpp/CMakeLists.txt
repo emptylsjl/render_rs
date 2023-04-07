@@ -59,3 +59,6 @@ target_link_libraries (texture ${LIBS})
 
 add_executable (vertex sample/vertex/vertex.cpp)
 target_link_libraries (vertex ${LIBS})
+
+add_executable (uniform sample/uniform/uniform.cpp)
+target_link_libraries (uniform ${LIBS})

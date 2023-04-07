@@ -6,7 +6,11 @@ use std::mem::MaybeUninit;
 
 use ash::{*, prelude::VkResult};
 use ash::extensions::{khr, ext};
+use glam::Mat4;
+use num_traits::Float;
 use smallvec::{smallvec, SmallVec};
+use crate::define::*;
+use crate::vertex::camera;
 use crate::vk_proc::proc::{char2s, VKProc};
 
 
@@ -126,6 +130,143 @@ impl<'a> VKDevice<'a> {
             })
     }
 
+    pub fn create_buffer(
+        &self,
+        buffer_size: u64,
+        buffer_usage: vk::BufferUsageFlags,
+        memory_type_flag: vk::MemoryPropertyFlags,
+    ) -> (vk::Buffer, vk::DeviceMemory) {
+        unsafe {
+            let buffer_create_info = vk::BufferCreateInfo::default()
+                .size(buffer_size)
+                .usage(buffer_usage)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE);
+
+            let buffer = self.device
+                .create_buffer(&buffer_create_info, None)
+                .expect("create buffer");
+            let buffer_memory_requirements = self.device
+                .get_buffer_memory_requirements(buffer);
+
+            let Some(memory_type_index) = self.find_memory_type(
+                buffer_memory_requirements.memory_type_bits,
+                memory_type_flag
+            ) else {
+                panic!("find memory_type")
+            };
+
+            let vertex_buffer_allocate_info = vk::MemoryAllocateInfo::default()
+                .allocation_size(buffer_memory_requirements.size)
+                .memory_type_index(memory_type_index as u32);
+
+            let device_memory = self.device
+                .allocate_memory(&vertex_buffer_allocate_info, None)
+                .expect("allocate memory");
+            self.device
+                .bind_buffer_memory(buffer, device_memory, 0)
+                .expect("bind memory");
+
+            (buffer, device_memory)
+        }
+    }
+
+    pub fn map_memory<T: Copy + Sized>(
+        &self,
+        src_slice: &[T],
+        // memory_size: usize,
+        device_memory: &vk::DeviceMemory,
+        unmap: bool
+    ) -> Option<&'a mut [T]> {
+        unsafe {
+            let device_memory_ptr = self.device
+                .map_memory(*device_memory, 0, (mem::size_of::<T>() * src_slice.len()) as _, vk::MemoryMapFlags::empty())
+                .expect("map vertex memory") as *mut T;
+            src_slice.as_ptr().copy_to_nonoverlapping(device_memory_ptr, src_slice.len());
+
+            if unmap {
+                self.device.unmap_memory(*device_memory);
+                None
+            } else {
+                Some(slice::from_raw_parts_mut(device_memory_ptr, src_slice.len()))
+            }
+        }
+    }
+
+
+    pub fn copy_memory(
+        &self,
+        queue: &vk::Queue,
+        src_buffer: &vk::Buffer,
+        dst_buffer: &vk::Buffer,
+        buffer_size: vk::DeviceSize,
+        command_pool: &vk::CommandPool,
+    ) {
+        let temp_command_buffers = self.command_buffer_allocate(command_pool, 1);
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::default()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+        unsafe {
+            self.device
+                .begin_command_buffer(temp_command_buffers[0], &command_buffer_begin_info)
+                .expect("begin Command Buffer");
+
+            let buffer_copy_regions = [
+                vk::BufferCopy::default()
+                    .size(buffer_size)
+            ];
+
+            self.device.cmd_copy_buffer(temp_command_buffers[0], *src_buffer, *dst_buffer, &buffer_copy_regions);
+
+            self.device
+                .end_command_buffer(temp_command_buffers[0])
+                .expect("Failed to end Command Buffer");
+
+            let submit_info = [
+                vk::SubmitInfo::default()
+                    .command_buffers(&temp_command_buffers)
+            ];
+            self.device
+                .queue_submit(*queue, &submit_info, vk::Fence::null())
+                .expect("Failed to Submit Queue.");
+            self.device
+                .queue_wait_idle(*queue)
+                .expect("Failed to wait Queue idle");
+
+            self.device.free_command_buffers(*command_pool, &temp_command_buffers);
+        }
+    }
+
+    pub fn update_uniform_buffer<>(&self, mapped_memory: &mut [Mat4], x: f32, y: f32) {
+        mapped_memory[0] = camera(x, y);
+    }
+
+    pub fn create_command_pool(&self, queue_family_index: u32) -> vk::CommandPool {
+
+        let pool_create_info = vk::CommandPoolCreateInfo::default()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family_index);
+
+        unsafe {
+            self.device
+            .create_command_pool(&pool_create_info, None)
+            .expect("create command pool")
+        }
+    }
+
+    pub fn command_buffer_allocate(&self, command_pool: &vk::CommandPool, buffer_count: u32) -> Vec<vk::CommandBuffer> {
+
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(buffer_count)
+            .command_pool(*command_pool);
+
+        unsafe {
+            self.device
+                .allocate_command_buffers(&command_buffer_allocate_info)
+                .expect("create command buffer")
+        }
+    }
+
     pub fn name(&self) -> String {
         char2s(&self.props.properties.device_name)
     }
@@ -140,7 +281,7 @@ impl<'a> VKDevice<'a> {
 impl Drop for VKDevice<'_> {
     fn drop(&mut self) {
 
-        println!("3");
+        println!("device");
         unsafe { self.device.destroy_device(None); }
     }
 }

@@ -9,9 +9,6 @@ extern crate test;
 
 use std::mem::MaybeUninit;
 use std::time::Instant;
-use ash::extensions::{ext, khr};
-use ash::{vk, *};
-use vulkano_shaders::shader;
 use crate::a::run;
 
 

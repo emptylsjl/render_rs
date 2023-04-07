@@ -186,9 +186,9 @@ impl Drop for VKProc {
     fn drop(&mut self) {
         unsafe {
 
-            println!("4");
+            println!("debug");
             self.debug_util.destroy_debug_utils_messenger(self.debug_msg, None);
-            println!("5");
+            println!("instance");
             self.instance.destroy_instance(None);
         }
     }

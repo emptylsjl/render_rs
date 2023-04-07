@@ -74,7 +74,7 @@ impl<'a> VKWindow<'a> {
 
 impl Drop for VKWindow<'_> {
     fn drop(&mut self) {
-        println!("2");
+        println!("win");
         self.destroy();
     }
 }
@@ -324,6 +324,10 @@ impl<'a> VKPresent<'a> {
     //     self.update_framebuffer(render_pass);
     // }
 
+    pub fn window_dim(&self) -> PhysicalSize<u32> {
+        self.window.get_dim_window()
+    }
+
     pub fn destroy(&mut self) {
         unsafe {
             self.device.device.device_wait_idle().expect("wait idle");
@@ -336,6 +340,7 @@ impl<'a> VKPresent<'a> {
 
 impl<'a> Drop for VKPresent<'a> {
     fn drop(&mut self) {
+        println!("present");
         self.destroy();
     }
 }

@@ -1,4 +1,4 @@
-#![feature(str_split_as_str)]
+
 #![feature(iterator_try_collect)]
 
 mod mobj;
@@ -119,6 +119,7 @@ impl PixOps for RgbaImage {
 }
 
 fn main() -> Result<(), Box<dyn Error>>{
+    let aaa = Mx4d::rot(YAXIS, PI*0.1044);
 
     let mut a = vec![1,2,3];
     let b = vec![1,2,3];
