@@ -237,7 +237,8 @@ impl<'a> VKDevice<'a> {
     }
 
     pub fn update_uniform_buffer<>(&self, mapped_memory: &mut [Mat4], x: f32, y: f32) {
-        mapped_memory[0] = camera(x, y);
+
+        // mapped_memory[0] = camera([x, y, ]);
     }
 
     pub fn create_command_pool(&self, queue_family_index: u32) -> vk::CommandPool {

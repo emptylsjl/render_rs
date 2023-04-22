@@ -82,7 +82,6 @@ impl Vertices {
                 .binding(0)
                 .format(vk::Format::R32G32B32A32_SFLOAT)
                 .offset(offset_of!(Vertex, cd) as u32)
-
         ]
     }
 
@@ -92,16 +91,18 @@ impl Vertices {
 }
 
 
+pub fn camera([x, y, w, h]: [f32; 4]) -> Mat4 {
+    let [x, y] = [(x-w/2.)/w, (y-h/2.)/h];
 
-pub fn camera(x: f32, y: f32) -> Mat4 {
-    let [x10, y10] = [x*10., y*10.];
+    let mut proj = Mat4::perspective_rh_gl(0.45 * 1.745329, W as f32 / H as f32, 0.1, 10.0);
+    proj.y_axis[1] *= -1.0;
     [
-        Mat4::IDENTITY,
-        // Mat4::from_rotation_x(x),
-        // Mat4::from_rotation_y(y),
+        proj,
+        Mat4::look_at_rh(vec3(2.0, 2.0, 2.0), vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0)),
+        Mat4::from_rotation_z(x*10.0),
+        // Mat4::from_rotation_x(x10),
+        // Mat4::from_rotation_y(y10),
         // Mat4::from_scale(vec3(x, x, 1.0)),
         Mat4::from_translation(vec3(x, y, 1.0)),
-        // Mat4::look_at_rh(vec3(2.0, 2.0, 2.0), vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, -1.0)),
-        // Mat4::perspective_rh_gl(0.45 * 1.745329, W as f32 / H as f32, 0.1, 10.0)
     ].iter().product()
 }

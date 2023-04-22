@@ -7,10 +7,13 @@ extern crate core;
 use std::error::Error;
 use std::ffi::{c_char, CStr};
 use std::fmt::{Debug, Formatter, Pointer};
-use std::{ptr, slice, time};
+use std::{mem, ptr, slice, time};
+use std::fs::{File, read};
+use std::mem::size_of_val;
 
 use ash::{*, };
 use itertools::Itertools;
+use png::{Info, OutputInfo, Reader};
 use winit::{
     event::{Event, DeviceEvent as DE, WindowEvent as WE},
     event_loop::EventLoop,
@@ -246,7 +249,7 @@ fn create_graphic_pipeline(
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
-        .front_face(vk::FrontFace::CLOCKWISE)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_clamp_enable(false);
 
     let multisample_create_info = vk::PipelineMultisampleStateCreateInfo::default()
@@ -397,7 +400,25 @@ struct VKBuffer<'a, T> {
     mapped: Option<&'a mut [T]>
 }
 
+fn read_img(path: &str) -> (Vec<u8>, OutputInfo) {
+    let decoder = png::Decoder::new(File::open(path).unwrap());
+    let mut reader = decoder.read_info().unwrap();
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let wh = reader.next_frame(&mut buf).unwrap();
+    (buf, wh)
+}
+
 fn main() {
+    let imgs = [
+        read_img("E:/storage/graphic/ai_gen/a/00014-1244403046.png"),
+        read_img("E:/storage/graphic/ai_gen/a/394562.png"),
+        read_img("E:/storage/graphic/ai_gen/a/00549-1880067250.png"),
+    ];
+
+    let img_mem_size = imgs.iter().map(|(x, _)| x.len() as u64).sum::<u64>();
+    // println!("{}", mem::size_of_val(&imgs));
+    // println!("{}", mem::size_of_val(&imgs));
+
     let vkproc = VKProc::new(true);
 
     let mut event_loop = EventLoop::new();
@@ -424,6 +445,7 @@ fn main() {
     let command_pool = vkdevice.create_command_pool(queue_index);
     let command_buffers = vkdevice.command_buffer_allocate(&command_pool, 2);
 
+
     let vertices = Vertices::new(vec![
         Vertex::from_arr(
             [-0.4, -0.4, 0.0, 2.0],
@@ -445,7 +467,7 @@ fn main() {
     let indices = [0u32, 1, 2, 3, 2, 0];
 
     let (temp_buffer, temp_memory) = vkdevice.create_buffer(
-        vertices.mem_size() as u64,
+        img_mem_size,
         vk::BufferUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
     );
@@ -482,11 +504,44 @@ fn main() {
             vk::BufferUsageFlags::UNIFORM_BUFFER,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
         );
-        let mapped_memory = vkdevice.map_memory::<glam::Mat4>(&[camera(0.0, 0.0)], &memory, false).unwrap();
+        let mapped_memory = vkdevice.map_memory::<glam::Mat4>(
+            &[camera([0.0, 0.0, W as f32, H as f32])],
+            &memory,
+            false
+        ).unwrap();
         VKBuffer {buffer, memory, mapped: Some(mapped_memory)}
     }).collect::<Vec<_>>();
 
+    let img = &imgs[0];
 
+    let img_extent = vk::Extent3D { width: img.1.width, height: img.1.height, depth: 1 };
+    let image_create_info = vk::ImageCreateInfo::default()
+        .image_type(vk::ImageType::TYPE_2D)
+        .extent(img_extent)
+        .mip_levels(1)
+        .array_layers(1)
+        .format(vk::Format::R8G8B8A8_SRGB)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .samples(vk::SampleCountFlags::TYPE_1);
+
+    let texture =
+
+    vkdevice.map_memory(&.0, &temp_memory, true);
+    let (img_buffer, img_memory) = vkdevice.create_buffer(
+        size_of_val(&imgs[0]) as u64,
+        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    );
+    vkdevice.copy_memory(
+        &queue,
+        &temp_buffer,
+        &img_buffer,
+        size_of_val(&imgs[0]) as _,
+        &command_pool,
+    );
 
     let frag_create_info = create_shader_module(&device, include_bytes!("shader/frag.spv"), vk::ShaderStageFlags::FRAGMENT);
     let vert_create_info = create_shader_module(&device, include_bytes!("shader/vert.spv"), vk::ShaderStageFlags::VERTEX);
@@ -537,7 +592,6 @@ fn main() {
     let mut exit = false;
     let mut fps = 0.;
     let pstart = time::Instant::now();
-
 
     event_loop.run_return(|event, _, control_flow| {
         // println!("{event:?}");
@@ -658,7 +712,7 @@ fn main() {
                         let [x, y, w, h] = [x as f32, y as _, width as _, height as _];
 
                         print!("\r2 - {:4}:{:4}   ", x, y);
-                        uniform_buffers[index % FRAMES_IN_FLIGHT].mapped.as_mut().unwrap()[0] = camera((x-w/2.)/w, (y-h/2.)/h);}
+                        uniform_buffers[index % FRAMES_IN_FLIGHT].mapped.as_mut().unwrap()[0] = camera([x, y, w, h]);}
 
                     WE::CloseRequested => {
                         unsafe {

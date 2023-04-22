@@ -9,6 +9,7 @@ extern crate test;
 
 use std::mem::MaybeUninit;
 use std::time::Instant;
+use glam::*;
 use crate::a::run;
 
 
@@ -41,8 +42,23 @@ fn main() {
     // let now = Instant::now();
     // run();
     // println!("Elapsed: {:.8?}", now.elapsed());
-    
 
+    [
+        Mat4::IDENTITY,
+        // Mat4::from_rotation_x(x),
+        // Mat4::from_rotation_y(y),
+        // Mat4::from_scale(vec3(x, x, 1.0)),
+        // Mat4::from_translation(vec3(x, y, 1.0)),
+        // Mat4::look_at_rh(vec3(2.0, 2.0, 2.0), vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0)),
+        // Mat4::perspective_rh_gl(0.45 * 1.745329, W as f32 / H as f32, 0.1, 10.0)
+    ];
+
+
+    let a = Mat4::from_rotation_y(1.);
+    println!("{:2.4}, {:2.4}, {:2.4}, {:2.4}", a.x_axis[0], a.x_axis[1], a.x_axis[2], a.x_axis[3]);
+    println!("{:2.4}, {:2.4}, {:2.4}, {:2.4}", a.y_axis[0], a.y_axis[1], a.y_axis[2], a.y_axis[3]);
+    println!("{:2.4}, {:2.4}, {:2.4}, {:2.4}", a.z_axis[0], a.z_axis[1], a.z_axis[2], a.z_axis[3]);
+    println!("{:2.4}, {:2.4}, {:2.4}, {:2.4}", a.w_axis[0], a.w_axis[1], a.w_axis[2], a.w_axis[3]);
 
 
     // let this_file = include_str!("main.rs");
