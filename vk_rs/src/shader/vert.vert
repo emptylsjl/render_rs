@@ -22,9 +22,14 @@ layout (binding = 0) uniform cameraTransformation {
 
 layout (location = 1) in vec4 color;
 
+layout(location = 2) in vec2 TexCoord;
+
 layout(location = 0) out vec4 fragColor;
+
+layout(location = 1) out vec2 fragTexCoord;
 
 void main() {
     gl_Position = camera.cam * position;
     fragColor = color;
+    fragTexCoord = TexCoord;
 }

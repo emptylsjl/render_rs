@@ -17,6 +17,7 @@ once_cell = "1.17.0"
 itertools = "0.10.5"
 memoffset = "0.8.0"
 png = "0.17.8"
+optick = "1.3.4"
 
 #[dev-dependencies]
 #criterion = "0.4"
